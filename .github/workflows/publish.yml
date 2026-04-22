@@ -18,22 +18,17 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout pressroom (this repo)
+      - name: Checkout pressroom (templates and pandoc)
         uses: actions/checkout@v4
         with:
           path: pressroom
 
-      - name: Checkout ideas-workbench (papers repo)
+      - name: Checkout ideas-workbench (papers)
         uses: actions/checkout@v4
         with:
           repository: zzpanic/ideas-workbench
           token: ${{ secrets.PAPERS_TOKEN }}
           path: ideas-workbench
-
-      - name: Install Pandoc dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-yaml
 
       - name: Validate manifest
         id: validate
@@ -65,11 +60,11 @@ jobs:
 
       - name: Extract Pandoc metadata
         run: |
-          MANIFEST="ideas-workbench/${{ inputs.basename }}/publish/manifest.json"
-          python3 - <<'EOF'
+          python3 - <<EOF
           import json, yaml
 
-          with open("$MANIFEST") as f:
+          manifest_path = "ideas-workbench/${{ inputs.basename }}/publish/manifest.json"
+          with open(manifest_path) as f:
               m = json.load(f)
 
           meta = {
@@ -88,18 +83,15 @@ jobs:
 
           print("Metadata extracted:", meta)
           EOF
-        env:
-          MANIFEST: ideas-workbench/${{ inputs.basename }}/publish/manifest.json
 
       - name: Build PDF
         run: |
           BASENAME="${{ inputs.basename }}"
           PAPER="ideas-workbench/$BASENAME/publish/paper.md"
           TEMPLATE="pressroom/pandoc/whitepaper.latex"
-          OUTPUT="/tmp/paper.pdf"
 
           if [ ! -f "$PAPER" ]; then
-            echo "ERROR: paper.md not found at $PAPER"
+            echo "ERROR: paper.md not found"
             exit 1
           fi
 
@@ -107,7 +99,7 @@ jobs:
             --template "$TEMPLATE" \
             --metadata-file /tmp/meta.yaml \
             --pdf-engine=xelatex \
-            -o "$OUTPUT"
+            -o /tmp/paper.pdf
 
           echo "PDF built successfully"
 
@@ -119,11 +111,11 @@ jobs:
           SRC="ideas-workbench/$BASENAME/publish"
 
           mkdir -p "$DEST"
-          cp /tmp/paper.pdf          "$DEST/paper.pdf"
-          cp "$SRC/manifest.json"    "$DEST/manifest.json"
+          cp /tmp/paper.pdf        "$DEST/paper.pdf"
+          cp "$SRC/manifest.json"  "$DEST/manifest.json"
 
           if [ -d "$SRC/artifacts" ]; then
-            cp -r "$SRC/artifacts"   "$DEST/artifacts"
+            cp -r "$SRC/artifacts" "$DEST/artifacts"
           fi
 
           cd ideas-workbench
@@ -133,7 +125,7 @@ jobs:
           git commit -m "publish: $BASENAME $VERSION"
           git push
 
-      - name: Create GitHub Release in pressroom
+      - name: Create GitHub Release in ideas-workbench
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "${{ inputs.basename }}-${{ inputs.version }}"
@@ -146,4 +138,4 @@ jobs:
             **Gate:** ${{ steps.validate.outputs.gate }}
           files: /tmp/paper.pdf
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAPERS_TOKEN }}
