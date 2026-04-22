@@ -1,0 +1,9 @@
+services:
+  pressroom:
+    image: ghcr.io/zzpanic/pressroom:latest
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: stack.env
+        required: false
+    restart: unless-stopped
