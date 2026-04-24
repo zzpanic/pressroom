@@ -1,9 +1,52 @@
 services:
   pressroom:
+
+    # The pre-built Docker image from GitHub Container Registry.
+    # GitHub Actions rebuilds and pushes this automatically whenever
+    # the pressroom repo is updated — you never need to build it yourself.
     image: ghcr.io/zzpanic/pressroom:latest
+
+    # Host port 7000 maps to the app's internal port 8000.
+    # Once running, open Pressroom at: http://<your-server-ip>:7000
     ports:
-      - "8000:8000"
-    env_file:
-      - path: stack.env
-        required: false
+      - "7000:8000"
+
+    environment:
+
+      # ── Ideas Workbench ──────────────────────────────────────────────────────
+      # Your PRIVATE repo where all drafts and publish folders live.
+      # GitHub username (just for the git commit author — can be any string)
+      - IDEAS_WORKBENCH_GIT_USER=zzpanic
+      # Classic personal access token with "repo" scope (read + write).
+      # Create one at: https://github.com/settings/tokens
+      - IDEAS_WORKBENCH_GIT_TOKEN=ghp_xxxx
+      # The repo in owner/repo format
+      - IDEAS_WORKBENCH_REPO=zzpanic/ideas-workbench
+
+      # ── Pressroom Pubs ───────────────────────────────────────────────────────
+      # Your PUBLIC repo that receives the final versioned snapshots.
+      # (Can use the same token as above if both repos are under the same account)
+      - PRESSROOM_PUBS_GIT_USER=zzpanic
+      - PRESSROOM_PUBS_GIT_TOKEN=ghp_xxxx
+      - PRESSROOM_PUBS_REPO=zzpanic/pressroom-pubs
+
+      # ── Pressroom App Repo ───────────────────────────────────────────────────
+      # The repo containing the Pressroom app itself.  The app fetches its
+      # LaTeX templates and license files from here at runtime.
+      # Only change this if you forked the pressroom repo under a different name.
+      - PRESSROOM_REPO=zzpanic/pressroom
+
+      # ── Git Branch ───────────────────────────────────────────────────────────
+      # Which branch Pressroom reads from and writes to in all three repos above.
+      # Leave as "main" unless you are using a different default branch name.
+      - GITHUB_BRANCH=main
+
+      # ── Web UI Login ─────────────────────────────────────────────────────────
+      # Username and password for the Pressroom browser interface.
+      # CHANGE THESE before exposing Pressroom to any network beyond localhost.
+      - APP_USER=admin
+      - APP_PASSWORD=pressroom
+
+    # Restart the container automatically if it crashes or the server reboots.
+    # "unless-stopped" means it will NOT restart if you manually stop it in Dockge.
     restart: unless-stopped
