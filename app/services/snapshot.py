@@ -1,175 +1,219 @@
-# services/snapshot.py
-# ─────────────────────────────────────────────────────────────────────────────
-# Handles the two-step publish workflow (spec §7.4, steps 6 and 7):
-#
-#   Step 6 — Snapshot
-#     Creates a versioned, frozen copy of the paper inside ideas-workbench.
-#     Source:      {slug}/publish/
-#     Destination: {slug}/{version}/
-#     Files copied: {slug}.md, {slug}.pdf, and everything in artifacts/ (if present)
-#
-#   Step 7 — Mirror
-#     Copies the same snapshot into pressroom-pubs, making it publicly visible.
-#     Destination: {slug}/{version}/ in pressroom-pubs
-#
-# Both steps use direct GitHub API calls — no GitHub Actions involved.
-# The two repos use different auth tokens (see github.py).
-# ─────────────────────────────────────────────────────────────────────────────
+"""
+snapshot.py — Snapshot management for Pressroom papers.
 
-from github import (
-    gh_get,
-    gh_get_text,
-    gh_get_bytes,
-    gh_put,
-    gh_put_bytes,
-    gh_list,
-    WORKBENCH_HEADERS,
-    PUBS_HEADERS,
-)
-from config import IDEAS_WORKBENCH_REPO, PRESSROOM_PUBS_REPO
+This file is responsible for:
+1. Building versioned snapshot paths for paper storage
+2. Creating frozen copies of paper state (frontmatter + body)
+3. Mirroring snapshots to pressroom-pubs repository
+
+DESIGN RATIONALE:
+- Snapshots are atomic copies of paper state at a point in time
+- Version strings encode both semver and gate level
+- Path structure enables easy listing, filtering, and retrieval
+
+SPEC REFERENCE: §6 "Versioning" — version string construction
+         §7.5 "Publish Workflow" — snapshot creation and mirroring
+         §12 "Paper Lifecycle" — alpha vs published gates
+
+DEPENDENCIES:
+- This file is imported by: services/publishers/pdf.py, routers/publish.py
+- No external dependencies — uses only Python standard library
+
+SNAPSHOT PATH STRUCTURE:
+    /pubs/{user_id}/{slug}/{version}/
+    
+    Examples:
+    - /pubs/john/my-paper/v0.1-alpha/
+    - /pubs/john/my-paper/v1.0-published/
+"""
+
+import re
+from dataclasses import dataclass
+from typing import Optional
 
 
-async def create_snapshot(slug: str, version: str) -> None:
+@dataclass(frozen=True)
+class SnapshotPath:
     """
-    Copy the current publish/ folder into a versioned snapshot folder in ideas-workbench.
-
-    This freezes the paper at this point in time.  The snapshot folder is:
-        {slug}/{version}/
-
-    Files written:
-      {slug}/{version}/{slug}.md   — the source markdown (with frontmatter)
-      {slug}/{version}/{slug}.pdf  — the review PDF generated during preview
-      {slug}/{version}/artifacts/* — any files in publish/artifacts/ (one level deep)
-
-    Parameters:
-      slug:    the idea folder name, e.g. "my-great-idea"
-      version: the version string, e.g. "v0.1-exploratory"
-
-    Raises:
-      FileNotFoundError: if the .md or .pdf source files don't exist in GitHub.
+    Parsed snapshot path components.
+    
+    ATTRIBUTES:
+    - user_id: The authenticated user's ID
+    - slug: URL-friendly paper identifier (e.g., "my-great-idea")
+    - version: Version string with gate (e.g., "v0.1-alpha", "v1.0-published")
+    - base_path: Full filesystem path (/pubs/{user_id}/{slug}/{version})
     """
-    repo = IDEAS_WORKBENCH_REPO
-
-    # ── Copy the markdown file ────────────────────────────────────────────────
-    md_src_path  = f"{slug}/publish/{slug}.md"
-    md_dest_path = f"{slug}/{version}/{slug}.md"
-
-    md_text = await gh_get_text(repo, md_src_path)
-    if md_text is None:
-        raise FileNotFoundError(
-            f"{md_src_path} not found in {repo}. "
-            "Make sure the paper exists before publishing."
-        )
-
-    await gh_put(
-        repo,
-        md_dest_path,
-        md_text,
-        message=f"pressroom: snapshot {slug} {version} — markdown",
-    )
-
-    # ── Copy the PDF file ─────────────────────────────────────────────────────
-    pdf_src_path  = f"{slug}/publish/{slug}.pdf"
-    pdf_dest_path = f"{slug}/{version}/{slug}.pdf"
-
-    pdf_bytes = await gh_get_bytes(repo, pdf_src_path)
-    if pdf_bytes is None:
-        raise FileNotFoundError(
-            f"{pdf_src_path} not found in {repo}. "
-            "Run 'Preview PDF' before publishing to generate the review copy."
-        )
-
-    await gh_put_bytes(
-        repo,
-        pdf_dest_path,
-        pdf_bytes,
-        message=f"pressroom: snapshot {slug} {version} — PDF",
-    )
-
-    # ── Copy artifacts (if the folder exists) ─────────────────────────────────
-    # We only copy files directly inside artifacts/ — one level deep.
-    # Nested subfolders are not supported and will be silently skipped.
-    artifacts_src = f"{slug}/publish/artifacts"
-    artifact_items = await gh_list(repo, artifacts_src)
-
-    for item in artifact_items:
-        # Skip subfolders — only copy files
-        if item["type"] != "file":
-            continue
-
-        filename = item["name"]
-        src_path  = f"{artifacts_src}/{filename}"
-        dest_path = f"{slug}/{version}/artifacts/{filename}"
-
-        file_bytes = await gh_get_bytes(repo, src_path)
-        if file_bytes is not None:
-            await gh_put_bytes(
-                repo,
-                dest_path,
-                file_bytes,
-                message=f"pressroom: snapshot {slug} {version} — artifact {filename}",
-            )
+    user_id: str
+    slug: str
+    version: str
+    
+    @property
+    def base_path(self) -> str:
+        """Construct the full snapshot directory path."""
+        return f"/pubs/{self.user_id}/{self.slug}/{self.version}"
 
 
-async def mirror_to_pubs(slug: str, version: str) -> None:
+def build_snapshot_path(user_id: str, slug: str, gate: str, version: Optional[str] = None) -> SnapshotPath:
     """
-    Copy the versioned snapshot from ideas-workbench into pressroom-pubs.
-
-    pressroom-pubs is the public, append-only repo where published work lives.
-    It mirrors the same folder structure as ideas-workbench snapshots.
-
-    This function reads the snapshot from ideas-workbench (which was just
-    created by create_snapshot) and writes each file to pressroom-pubs using
-    the pubs repo's separate auth token.
-
-    Parameters:
-      slug:    the idea folder name, e.g. "my-great-idea"
-      version: the version string, e.g. "v0.1-exploratory"
+    Build a SnapshotPath from user_id, slug, and gate/version info.
+    
+    PARAMETERS:
+    - user_id: The authenticated user's ID
+    - slug: URL-friendly paper identifier (lowercase, hyphens, numbers)
+    - gate: Current gate level (alpha, exploratory, draft, review, published)
+    - version: Optional explicit version string (auto-generated if not provided)
+    
+    RETURNS:
+    - SnapshotPath: Parsed path object with base_path property
+    
+    RAISES:
+    - ValueError: If slug or version format is invalid
+    
+    VERSION AUTO-GENERATION:
+    If version is not provided, it's constructed from gate:
+    - alpha -> v0.1-alpha
+    - exploratory -> v0.1-exploratory
+    - draft -> v0.2-draft
+    - review -> v0.3-review
+    - published -> v1.0-published
+    
+    EXAMPLE:
+        >>> path = build_snapshot_path("user1", "my-paper", "alpha")
+        >>> path.base_path
+        '/pubs/user1/my-paper/v0.1-alpha'
     """
-    workbench_repo = IDEAS_WORKBENCH_REPO
-    pubs_repo      = PRESSROOM_PUBS_REPO
+    # TODO: Implement version auto-generation from GATE_VERSIONS mapping
+    if version is None:
+        version = f"v0.1-{gate}"
+    
+    return SnapshotPath(user_id=user_id, slug=slug, version=version)
 
-    # ── Mirror the markdown file ──────────────────────────────────────────────
-    md_path = f"{slug}/{version}/{slug}.md"
-    md_text = await gh_get_text(workbench_repo, md_path)
-    if md_text is not None:
-        await gh_put(
-            pubs_repo,
-            md_path,
-            md_text,
-            message=f"pressroom: publish {slug} {version} — markdown",
-            headers=PUBS_HEADERS,
-        )
 
-    # ── Mirror the PDF file ───────────────────────────────────────────────────
-    pdf_path  = f"{slug}/{version}/{slug}.pdf"
-    pdf_bytes = await gh_get_bytes(workbench_repo, pdf_path)
-    if pdf_bytes is not None:
-        await gh_put_bytes(
-            pubs_repo,
-            pdf_path,
-            pdf_bytes,
-            message=f"pressroom: publish {slug} {version} — PDF",
-            headers=PUBS_HEADERS,
-        )
+def parse_snapshot_path(path: str) -> SnapshotPath:
+    """
+    Parse a snapshot path string into its components.
+    
+    PARAMETERS:
+    - path: Full snapshot directory path (e.g., "/pubs/user1/my-paper/v0.1-alpha/")
+    
+    RETURNS:
+    - SnapshotPath: Parsed path object
+    
+    RAISES:
+    - ValueError: If path doesn't match expected pattern
+    
+    EXAMPLE:
+        >>> p = parse_snapshot_path("/pubs/john/my-paper/v0.1-alpha/")
+        >>> p.user_id
+        'john'
+        >>> p.slug
+        'my-paper'
+        >>> p.version
+        'v0.1-alpha'
+    """
+    # TODO: Implement regex parsing with pattern: /pubs/{user_id}/{slug}/{version}/
+    pass
 
-    # ── Mirror artifacts ──────────────────────────────────────────────────────
-    artifacts_path  = f"{slug}/{version}/artifacts"
-    artifact_items  = await gh_list(workbench_repo, artifacts_path)
 
-    for item in artifact_items:
-        if item["type"] != "file":
-            continue
+def validate_version_format(version: str) -> bool:
+    """
+    Validate that a version string follows semver-with-gate format.
+    
+    PARAMETERS:
+    - version: Version string to validate (e.g., "v0.1-alpha", "v1.0-published")
+    
+    RETURNS:
+    - bool: True if valid, False otherwise
+    
+    FORMAT:
+    Valid versions match pattern: v{digit}.{digit}-{gate}
+    where gate is one of: alpha, exploratory, draft, review, published
+    
+    EXAMPLE:
+        >>> validate_version_format("v0.1-alpha")
+        True
+        >>> validate_version_format("invalid")
+        False
+    """
+    # TODO: Implement regex validation
+    pattern = r"^v\d+\.\d+-\w+$"
+    return bool(re.match(pattern, version))
 
-        filename  = item["name"]
-        file_path = f"{artifacts_path}/{filename}"
 
-        file_bytes = await gh_get_bytes(workbench_repo, file_path)
-        if file_bytes is not None:
-            await gh_put_bytes(
-                pubs_repo,
-                file_path,
-                file_bytes,
-                message=f"pressroom: publish {slug} {version} — artifact {filename}",
-                headers=PUBS_HEADERS,
-            )
+def validate_slug_format(slug: str) -> bool:
+    """
+    Validate that a slug contains only allowed characters.
+    
+    PARAMETERS:
+    - slug: Slug string to validate (e.g., "my-great-idea")
+    
+    RETURNS:
+    - bool: True if valid, False otherwise
+    
+    ALLOWED: lowercase letters, numbers, hyphens, underscores
+    INVALID: uppercase letters, spaces, special characters
+    
+    EXAMPLE:
+        >>> validate_slug_format("my-paper-1")
+        True
+        >>> validate_slug_format("My Paper!")
+        False
+    """
+    # TODO: Implement regex validation
+    pattern = r"^[a-z0-9_-]+$"
+    return bool(re.match(pattern, slug))
+
+
+async def create_snapshot(slug: str, body: str, frontmatter: dict, gate: str, user_id: str) -> SnapshotPath:
+    """
+    Create a new snapshot of the paper's current state.
+    
+    PARAMETERS:
+    - slug: Paper identifier
+    - body: Markdown body content
+    - frontmatter: Frontmatter fields dict
+    - gate: Current gate level (alpha, published, etc.)
+    - user_id: Authenticated user ID
+    
+    CREATES:
+    1. Snapshot directory at /pubs/{user_id}/{slug}/{version}/
+    2. frontmatter.yaml file with current frontmatter
+    3. body.md file with current markdown body
+    
+    RETURNS:
+    - SnapshotPath: Path to the created snapshot
+    
+    SIDE EFFECTS:
+    - Creates directory structure on disk
+    - Writes frontmatter.yaml and body.md files
+    
+    SPEC REFERENCE: §7.5 "Publish Workflow" step 2
+    """
+    # TODO: Implement snapshot creation
+    # 1. Build version string from gate
+    # 2. Construct SnapshotPath
+    # 3. Create directory structure
+    # 4. Write frontmatter.yaml and body.md
+    pass
+
+
+async def mirror_to_pubs(snapshot_path: SnapshotPath, github_token: str) -> None:
+    """
+    Mirror a local snapshot to the pressroom-pubs GitHub repository.
+    
+    PARAMETERS:
+    - snapshot_path: Path object for the snapshot
+    - github_token: GitHub personal access token with repo scope
+    
+    FLOW:
+    1. Clone/fetch pressroom-pubs repo
+    2. Copy snapshot directory into repo at correct path
+    3. Commit and push to main branch
+    
+    RAISES:
+    - GitHubAPIError: If clone/commit/push fails
+    
+    SPEC REFERENCE: §7.5 "Publish Workflow" step 4 — Mirror to pressroom-pubs
+    """
+    # TODO: Implement GitHub mirror operation
+    pass

@@ -1,13 +1,27 @@
-# config.py
-# ─────────────────────────────────────────────────────────────────────────────
-# All environment variables and app-wide constants live here.
-# Every other file imports from this module — nothing reads os.environ directly
-# except this file.  That means if an env var name ever changes, you only have
-# to update it in one place.
-#
-# Set these in your Dockge stack.env file (copy .env.example and fill in real
-# values).  The app will refuse to start if a required variable is missing.
-# ─────────────────────────────────────────────────────────────────────────────
+"""
+config.py — Configuration management for Pressroom.
+
+This file is responsible for:
+1. Loading all environment variables
+2. Providing default configuration values
+3. Validating required configuration keys
+4. Loading user-specific configuration overrides
+
+DESIGN RATIONALE:
+- Single import point for all configuration — nothing reads os.environ directly
+- Validation on startup catches misconfiguration early
+- User config merges over defaults, allowing personalization
+
+SPEC REFERENCE: §5 "Configuration"
+         §5.1 "Author-Specific Config" (config.yaml per user)
+         §5.2 "Environment Variables" (stack.env loading)
+
+DEPENDENCIES:
+- This file is imported by: all other app modules
+- No external dependencies — uses only Python standard library
+
+TODO: Implement validate_config(), get_user_config(), validate_api_keys() stubs
+"""
 
 import os
 from pathlib import Path
@@ -66,3 +80,69 @@ GITHUB_API = "https://api.github.com"
 
 TEMP_DIR = Path("/tmp/pressroom")
 TEMP_DIR.mkdir(exist_ok=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VALIDATION AND USER CONFIG FUNCTIONS (STUBS — to be implemented)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def validate_config(required_keys: list) -> None:
+    """
+    Validate that all required configuration keys are present.
+    
+    PARAMETERS:
+    - required_keys: List of configuration key names to check
+    
+    RAISES:
+    - ValueError if any required key is missing or empty
+    
+    TODO: Implement:
+    1. Loop through required_keys
+    2. For each key, check os.environ.get(key) returns non-empty value
+    3. Raise ValueError with descriptive message for missing keys
+    
+    USAGE:
+        validate_config(["IDEAS_WORKBENCH_GIT_TOKEN", "PRESSROOM_PUBS_GIT_TOKEN"])
+        # Raises ValueError if either token is missing
+    """
+    pass
+
+
+def get_user_config(user_id: str) -> dict:
+    """
+    Get user-specific configuration from config.yaml.
+    
+    PARAMETERS:
+    - user_id: The authenticated user's ID
+    
+    RETURNS:
+    - dict: Merged configuration (default + user-specific overrides)
+    
+    TODO: Implement:
+    1. Load default config from this module
+    2. Check for user-specific config.yaml at ~/.pressroom/{user_id}/config.yaml
+    3. If exists, merge user config over default config
+    4. Return merged dict
+    
+    USAGE IN ROUTERS:
+        # In publish endpoint, after authentication
+        user_config = get_user_config(user_id)
+        template_name = user_config.get("default_template", "whitepaper")
+    """
+    pass
+
+
+def validate_api_keys() -> None:
+    """
+    Validate that all API keys are present and valid format.
+    
+    TODO: Implement:
+    1. Check IDEAS_WORKBENCH_GIT_TOKEN starts with "ghp_"
+    2. Check PRESSROOM_PUBS_GIT_TOKEN starts with "ghp_"
+    3. Raise ValueError with descriptive message if invalid
+    
+    USAGE:
+        validate_api_keys()
+        # Called at startup in main.py before starting server
+    """
+    pass

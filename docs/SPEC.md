@@ -1,6 +1,6 @@
 # Pressroom — System Specification
 
-**Version:** v0.1-alpha  
+**Version:** v0.2-alpha  
 **Gate:** alpha  
 **Status:** ALPHA  
 **Author:** Patrick Nichols  
@@ -11,31 +11,41 @@
 
 ## 1. Overview
 
-Pressroom is a stateless local web application that manages the review, PDF generation, and publication of ideas from the Ideas Workbench. It runs as a Docker container deployed via Dockge. All configuration and content live in external GitHub repositories — the app itself contains no state.
+Pressroom is a multi-user web application that manages the review, PDF generation, and publication of ideas from user-specific Ideas Workbenches. It runs as a Docker container deployed via Dockge. All content lives in external GitHub repositories — the app itself holds no persistent state beyond a lightweight SQLite store for user authentication and token management.
+
+> **Note:** This project is maintained by someone learning to code. All code and documentation are written with extra verbosity to aid understanding. Comments explain not just *what* the code does, but *why* it was written that way.
 
 ---
 
 ## 2. Repository Architecture
 
-Three repositories form the system:
+The system uses three GitHub repositories, each with a specific responsibility:
 
 | Repository | Visibility | Purpose |
 |---|---|---|
-| `zzpanic/ideas-workbench` | Private | Ideas, working files, config, pre-publish PDFs |
+| `zzpanic/ideas-workbench` (or per-user equivalent) | Private | Ideas, working files, config, pre-publish PDFs |
 | `zzpanic/pressroom` | Public | App source code, Docker image, GitHub Actions |
-| `zzpanic/pressroom-pubs` | Public | Published versioned snapshots (static, append-only) |
+| `zzpanic/pressroom-pubs` (or per-user equivalent) | Public | Published versioned snapshots (static, append-only) |
+
+> **Why three repos?** The separation allows content (ideas-workbench) to be private while the app code and published output (pressroom, pressroom-pubs) remain public. Each user gets their own workbench and pubs repo, isolated from other users.
+
+In a multi-user deployment, each user has their own `ideas-workbench` and `pressroom-pubs` repositories. The app resolves the target repos from the authenticated user's configuration.
 
 ---
 
 ## 3. Folder Conventions
 
-### 3.1 ideas-workbench
+### 3.1 Per-User Ideas Workbench
 
 ```
-ideas-workbench/
-├── zz-pressroom/                   # Pressroom config (templates, author details)
+{user-workbench}/
+├── zz-pressroom/                   # User-specific Pressroom config
 │   ├── author.yaml                 # Author metadata (name, email, github, orcid)
-│   └── [future: additional config]
+│   ├── defaults.yaml               # Default frontmatter values per template
+│   └── templates/                  # User-uploaded document templates
+│       ├── whitepaper.latex        # LaTeX templates
+│       ├── blogpost.lufi           # Sile templates (future)
+│       └── [other formats]
 ├── {idea-slug}/                    # One folder per idea, slug is hyphenated lowercase
 │   ├── [working files, notes, drafts — unstructured]
 │   └── publish/
@@ -50,12 +60,14 @@ ideas-workbench/
             └── artifacts/
 ```
 
-### 3.2 pressroom-pubs
+> **Folder structure explanation:** Each idea gets its own folder named with a "slug" (a URL-friendly identifier like `my-great-idea`). The `publish/` subfolder holds the current working version. Once published, a snapshot is copied to a versioned folder like `v0.1-exploratory/` which is never modified — this creates an audit trail of the idea's evolution.
 
-Mirrors the versioned snapshots from ideas-workbench on publication:
+### 3.2 Per-User Pressroom Pubs
+
+Mirrors the versioned snapshots from the user's workbench on publication:
 
 ```
-pressroom-pubs/
+{user-pubs}/
 └── {idea-slug}/
     └── v{semver}-{gate}/
         ├── {idea-slug}.md
@@ -63,21 +75,60 @@ pressroom-pubs/
         └── artifacts/
 ```
 
-### 3.3 pressroom (app repo)
+> **Why mirror to pressroom-pubs?** The pubs repo is the public, append-only record of all published work. It acts as a permanent archive that anyone can access, while the workbench repo remains private.
+
+### 3.3 Pressroom App Repo (Source Code Structure)
 
 ```
 pressroom/
 ├── app/
-│   ├── main.py
-│   ├── Dockerfile
-│   ├── requirements.txt
-│   └── static/
+│   ├── main.py                     # FastAPI application entry point
+│   ├── auth.py                     # Authentication (JWT + HTTP Basic)
+│   ├── config.py                   # Configuration and env var management
+│   ├── github.py                   # GitHub API abstraction layer
+│   ├── exceptions.py               # Custom exception classes
+│   ├── logging_config.py           # Structured logging setup
+│   ├── models.py                   # Pydantic request/response models
+│   ├── Dockerfile                  # Container build instructions
+│   ├── requirements.txt            # Python dependencies
+│   ├── routers/                    # API endpoint definitions
+│   │   ├── papers.py              # Paper metadata CRUD operations
+│   │   ├── preview.py             # PDF generation + review workflow
+│   │   ├── publish.py             # Versioned snapshot + mirror
+│   │   ├── templates.py           # Template listing and upload
+│   │   ├── status.py              # Task status polling (future)
+│   │   └── config.py            # Author config from user's workbench
+│   ├── services/                   # Business logic
+│   │   ├── frontmatter.py         # YAML frontmatter parsing/writing
+│   │   ├── pdf/                   # Modular PDF engine system
+│   │   │   ├── base.py            # PDFEngine protocol (interface)
+│   │   │   ├── pandoc_engine.py  # Pandoc + XeLaTeX implementation
+│   │   │   └── sile_engine.py    # Sile (Lua-based typesetting) stub
+│   │   ├── snapshot.py            # Snapshot creation + mirror to pubs
+│   │   └── publishers/           # Extensible publish formats (future)
+│   │       ├── base.py
+│   │       ├── pdf.py
+│   │       ├── blog.py           # Blog post publishing stub
+│   │       └── docx.py           # DOCX export stub
+│   └── static/                     # Frontend assets
+│       ├── index.html
+│       ├── css/
+│       └── js/
 ├── .github/
 │   └── workflows/
 │       └── docker-build.yml        # Builds and pushes image to GHCR on push to main
-├── docker-compose.yml
-└── README.md
+├── docker-compose.yml              # Container orchestration
+├── LICENSE
+├── README.md
+└── docs/
+    └── SPEC.md                     # This specification document
 ```
+
+> **Architecture explanation:** The app follows a layered architecture:
+> 1. `routers/` — handles HTTP requests/responses (the "controller" layer)
+> 2. `services/` — contains business logic, independent of HTTP (the "service" layer)
+> 3. `github.py` — abstraction layer that talks to GitHub API (the "data" layer)
+> This separation means each layer can be modified or replaced without affecting others.
 
 ---
 
@@ -93,36 +144,40 @@ Gates represent the maturity of an idea. The gate is encoded in both the YAML fr
 | `review` | `v0.3-review` | Complete. No unresolved placeholders. Ready for final QA. |
 | `published` | `v1.0` | Packaged and live. |
 
+> **Why gates?** Gates provide a shared vocabulary between the author and the system. Each gate level represents a checkpoint where the idea has reached a meaningful state of development. The version string is auto-generated from the gate name, ensuring consistency.
+
 Gate promotion is a deliberate authorial act — the gate label in the frontmatter is updated, the version string incremented accordingly, and a new snapshot created.
 
 ---
 
 ## 5. Frontmatter Schema
 
-All papers carry YAML frontmatter. The metadata file in `publish/metadata/` mirrors or extends this. Fields:
+All papers carry YAML frontmatter. The frontmatter block at the top of `{slug}.md` is the single source of truth for both content and metadata. Pressroom parses the frontmatter block on load, presents the fields in the UI for editing, and writes any changes back to the same file via GitHub API. Obsidian renders and edits YAML frontmatter natively.
 
 ```yaml
-title: "{Title}"
-subtitle: "{One-sentence summary}"
-author:
-  name: "{Author name}"
-  email: "{Author email}"
-  github: "{GitHub username}"
-date: YYYY-MM-DD
-version: "v{semver}-{gate}"        # e.g. v0.1-exploratory
-gate: {gate}                        # alpha | exploratory | draft | review | published
-status: "{GATE UPPERCASED}"
-slug: "{idea-slug}"                 # hyphenated lowercase, matches folder name
-license: "CC BY 4.0"
-license_url: "https://creativecommons.org/licenses/by/4.0/"
-ai_assisted:
-  ideation: {true|false}
-  writing: {true|false}
-  research: {true|false}
-github_repo: ""                     # populated on first publish
-zenodo_doi: ""                      # populated on Zenodo upload
-prior_art_disclosure: ""            # free text, specific claims preferred
+title: "{Title}"                          # Paper title displayed in UI and PDF
+subtitle: "{One-sentence summary}"        # Brief description shown under title
+author:                                   # Nested object for author metadata
+  name: "{Author name}"                   # Full legal name
+  email: "{Author email}"                 # Contact email
+  github: "{GitHub username}"             # GitHub profile handle
+date: YYYY-MM-DD                          # Auto-updated on every save
+version: "v{semver}-{gate}"               # e.g. v0.1-exploratory (auto-derived from gate)
+gate: {gate}                              # alpha | exploratory | draft | review | published
+status: "{GATE UPPERCASED}"               # e.g. "EXPLORATORY" (auto-derived from gate)
+slug: "{idea-slug}"                       # hyphenated lowercase, matches folder name
+license: "CC BY 4.0"                      # Creative Commons license identifier
+license_url: "https://creativecommons.org/licenses/by/4.0/"  # Auto-derived from license name
+ai_assisted:                              # Boolean flags for AI usage disclosure
+  ideation: {true|false}                  # Was AI used to generate ideas?
+  writing: {true|false}                 # Was AI used to write text?
+  research: {true|false}                # Was AI used for research?
+github_repo: ""                           # populated on first publish (e.g. "zzpanic/ideas-workbench")
+zenodo_doi: ""                          # populated when Zenodo integration is added
+prior_art_disclosure: ""                  # free text, specific claims preferred
 ```
+
+> **Frontmatter explanation:** Frontmatter is a YAML block delimited by `---` markers at the top of a markdown file. Pressroom reads this block to populate the metadata form in the UI. When the user saves changes, Pressroom rewrites the frontmatter while preserving the paper body unchanged. The `author` field is a nested object — when written to YAML, it becomes a nested structure.
 
 ---
 
@@ -135,11 +190,13 @@ v{major}.{minor}-{gate}
 ```
 
 Examples:
-- `v0.1-alpha`
-- `v0.1-exploratory`
-- `v0.2-draft`
-- `v0.3-review`
-- `v1.0` (published — no gate suffix at v1.0)
+- `v0.1-alpha` — Initial capture, not yet developed
+- `v0.1-exploratory` — Real content present, thinking visible
+- `v0.2-draft` — Structured and substantive
+- `v0.3-review` — Complete, ready for final QA
+- `v1.0` — Published (no gate suffix at v1.0)
+
+> **Version naming explanation:** The semver-style prefix (`v0.1`, `v0.2`) tracks major developmental phases. The gate suffix (`-alpha`, `-exploratory`) identifies which gate the version corresponds to. At `v1.0`, the gate suffix is dropped because publication is the final state.
 
 The slug is hyphenated lowercase, matching the idea folder name. Example filename:
 ```
@@ -150,55 +207,1134 @@ pressroom-spec-v0.1-alpha.pdf
 
 ## 7. Pressroom App — Runtime Behaviour
 
-### 7.1 Stateless Design
+### 7.1 Stateless Design with Lightweight User Store
 
-The app holds no state. All content and config is read from and written to GitHub via API on demand. The Dockge environment variables are the only persistent configuration.
+The app holds no persistent content state. All content and config is read from and written to GitHub via API on demand. User authentication data (JWT secrets, per-user GitHub tokens) is stored in a local SQLite database (`/data/pressroom.db` inside the container).
+
+> **Why SQLite?** SQLite stores data in a single file on disk. It's simple, requires no separate database server, and is fast enough for a single-user or small multi-user application. The `/data` volume persists the database across container restarts.
+
+The SQLite store contains three tables:
+
+1. **`users` table** — user credentials and profile metadata
+   ```sql
+   CREATE TABLE users (
+       user_id TEXT PRIMARY KEY,
+       username TEXT UNIQUE NOT NULL,
+       password_hash TEXT NOT NULL,        -- bcrypt hash
+       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+   );
+   ```
+
+2. **`user_tokens` table** — encrypted GitHub personal access tokens keyed to users
+   ```sql
+   CREATE TABLE user_tokens (
+       user_id TEXT PRIMARY KEY,           -- foreign key to users.user_id
+       encrypted_token TEXT NOT NULL,      -- AES-256-GCM ciphertext
+       repo_url TEXT,                      -- which workbench repo this token authenticates
+       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+   );
+   ```
+
+3. **`tasks` table** — async task status for non-blocking UI operations
+   ```sql
+   CREATE TABLE tasks (
+       task_id TEXT PRIMARY KEY,
+       user_id TEXT NOT NULL,
+       status TEXT DEFAULT 'pending',      -- pending | running | completed | failed
+       result JSON,                        -- serialized success result
+       error TEXT,                         -- error message if failed
+       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+   );
+   ```
+
+All other configuration (template content, author details) is read from the user's workbench repository via GitHub API.
 
 ### 7.2 Environment Variables (Dockge)
 
-```
-IDEAS_WORKBENCH_GIT_USER=zzpanic
-IDEAS_WORKBENCH_GIT_TOKEN=ghp_xxxx        # classic token, repo scope
-IDEAS_WORKBENCH_REPO=zzpanic/ideas-workbench
+Environment variables are how the container receives configuration from outside. They are set in the `.env` file managed by Dockge.
 
+```
+# ────────────────────────────────────────────────────────────────
+# App Authentication (fallback for single-user mode)
+# If multi-user JWT auth is not enabled, these provide a single admin login
+# ────────────────────────────────────────────────────────────────
+APP_USER=admin                          # Default username
+APP_PASSWORD=pressroom                  # Default password (CHANGE IN PRODUCTION)
+
+# ────────────────────────────────────────────────────────────────
+# JWT Configuration
+# JWT (JSON Web Token) is used for session-based authentication
+# JWT_SECRET should be a random 64-character string
+# JWT_EXPIRY_MINUTES controls how long a login session lasts
+# ────────────────────────────────────────────────────────────────
+JWT_SECRET=<random-64-char-string>      # Secret key for signing JWTs
+JWT_EXPIRY_MINUTES=480                  # Session duration (8 hours)
+
+# ────────────────────────────────────────────────────────────────
+# Default GitHub Workbench Config (fallback for single-user mode)
+# In multi-user mode, these are overridden per-user from the SQLite store
+# ────────────────────────────────────────────────────────────────
+IDEAS_WORKBENCH_GIT_USER=zzpanic        # GitHub username/owner
+IDEAS_WORKBENCH_GIT_TOKEN=ghp_xxxx      # Personal access token with repo scope
+IDEAS_WORKBENCH_REPO=zzpanic/ideas-workbench  # owner/repo format
+
+# ────────────────────────────────────────────────────────────────
+# Default Pressroom Pubs Config (fallback for single-user mode)
+# ────────────────────────────────────────────────────────────────
 PRESSROOM_PUBS_GIT_USER=zzpanic
-PRESSROOM_PUBS_GIT_TOKEN=ghp_xxxx         # classic token, repo scope
+PRESSROOM_PUBS_GIT_TOKEN=ghp_xxxx       # Separate token for pubs repo
 PRESSROOM_PUBS_REPO=zzpanic/pressroom-pubs
+
+# ────────────────────────────────────────────────────────────────
+# App Source Repo
+# Used to fetch templates and prompt templates at runtime
+# Read-only — the workbench token is fine here since pressroom is public
+# ────────────────────────────────────────────────────────────────
+PRESSROOM_REPO=zzpanic/pressroom
+
+# ────────────────────────────────────────────────────────────────
+# Git Branch
+# Which branch to read from and write to in all three repos
+# ────────────────────────────────────────────────────────────────
+GITHUB_BRANCH=main
+
+# ────────────────────────────────────────────────────────────────
+# PDF Engine Selection
+# Which rendering engine to use: "pandoc" (default) or "sile"
+# ────────────────────────────────────────────────────────────────
+PDF_ENGINE=pandoc
 ```
 
-Document these as placeholder values in `.env.example` in the pressroom repo. Actual tokens never touch the repo.
+> **Environment variable explanation:** Env vars are read at application startup by `config.py`. Required variables cause the app to fail fast (exit immediately) if missing, rather than failing silently later. The `_TOKEN` values are secrets — they should never be committed to the repository.
 
 ### 7.3 Config Source
 
-Pressroom reads its config (templates, author details) from `ideas-workbench/zz-pressroom/` via GitHub API on startup or refresh. This keeps config Obsidian-editable and version-controlled alongside the ideas.
+Pressroom reads user config (templates, author details) from `{user-workbench}/zz-pressroom/` via GitHub API on startup or config refresh. This keeps config Obsidian-editable and version-controlled alongside the ideas.
+
+In multi-user mode, each user's tokens and repo URLs are resolved from the SQLite store at authentication time. The `config.py` module gains an async `get_user_config(user_id)` method that returns a `UserConfig` dataclass with per-user values:
+
+```python
+# Dataclass is a lightweight class that stores data (like a struct in C)
+# The @dataclass decorator auto-generates __init__, __repr__, and __eq__ methods
+@dataclass
+class UserConfig:
+    """Per-user configuration resolved from the SQLite token store."""
+    
+    github_user: str            # GitHub username for API calls
+    github_token: str           # Decrypted personal access token
+    workbench_repo: str         # e.g. "johndoe/ideas-workbench" (owner/repo format)
+    pubs_repo: str              # e.g. "johndoe/pressroom-pubs" (owner/repo format)
+    branch: str                 # Git branch to operate on (default: "main")
+    pdf_engine: str             # Overrides global PDF_ENGINE for this user
+```
+
+> **Why per-user config?** In multi-user mode, each user has their own GitHub repos and tokens. The `get_user_config()` method looks up the authenticated user's row in the `user_tokens` table and returns a `UserConfig` with decrypted values. This means the same app code works for both single-user (env vars) and multi-user (SQLite) modes.
 
 ### 7.4 Metadata
 
 YAML frontmatter inside `publish/{idea-slug}.md` is the single source of truth for both content and metadata. There is no separate metadata file or folder. Pressroom parses the frontmatter block on load, presents the fields in the UI for editing, and writes any changes back to the same file via GitHub API. Obsidian renders and edits YAML frontmatter natively.
 
-### 7.4 Publish Workflow
+> **Why frontmatter as metadata store?** Frontmatter lives inside the markdown file itself, so metadata and content are always together. When you view the file in Obsidian or any markdown editor, the metadata is right at the top. There's no risk of metadata drifting out of sync with content.
 
-1. **Pull** — fetch current `{idea-slug}/publish/` from ideas-workbench
-2. **Generate PDF** — render `{idea-slug}.md` → `{idea-slug}.pdf` via Quarto (Docker dependency)
-3. **Write review copy** — push generated PDF back to `{idea-slug}/publish/{idea-slug}.pdf`
+### 7.5 Publish Workflow
+
+The publish workflow transforms a working draft into a versioned, published snapshot:
+
+1. **Pull** — fetch current `{idea-slug}/publish/` from user's workbench via GitHub API
+   - `gh_get_text(IDEAS_WORKBENCH_REPO, f"{slug}/publish/{slug}.md")` retrieves the markdown content
+2. **Generate PDF** — render `{idea-slug}.md` → `{idea-slug}.pdf` via selected PDF engine
+   - The PDF engine (Pandoc or Sile) processes the markdown + LaTeX template into a PDF file
+   - Output is written to `/tmp/pressroom/{slug}/{slug}.pdf` (local temp directory)
+3. **Write review copy** — push generated PDF back to `{idea-slug}/publish/{idea-slug}.pdf` in workbench
+   - `gh_put_bytes()` uploads the PDF, creating a commit on the branch
 4. **Review** — author opens PDF in browser preview, inspects it
+   - The browser receives the PDF as an inline response (`Content-Type: application/pdf`)
 5. **Approve** — author confirms version string, gate, metadata in UI
-6. **Snapshot** — Pressroom creates `{idea-slug}/v{semver}-{gate}/` in ideas-workbench with frozen copies of MD, PDF, and artifacts
-7. **Mirror** — same snapshot pushed to `pressroom-pubs/{idea-slug}/v{semver}-{gate}/`
+   - A POST request to `/api/papers/{slug}/publish` with `{"version": "v0.1-exploratory"}`
+6. **Snapshot** — Pressroom creates `{idea-slug}/v{semver}-{gate}/` in workbench with frozen copies of MD, PDF, and artifacts
+   - `create_snapshot()` copies files from `publish/` to the versioned folder
+7. **Mirror** — same snapshot pushed to `{user-pubs}/{idea-slug}/v{semver}-{gate}/`
+   - `mirror_to_pubs()` reads from workbench and writes to pubs repo using the pubs auth token
+
+> **Publish workflow explanation:** The workflow is sequential — each step depends on the previous one succeeding. If step 3 fails (PDF push), the author can retry without losing their work. If step 6 fails (snapshot), step 7 is not attempted. Error messages include enough context to diagnose the failure point.
 
 The approval step is a deliberate gate — nothing publishes automatically.
 
 ---
 
-## 8. PDF Generation
+## 8. PDF Generation — Modular Engine Architecture
 
-Quarto is the rendering engine, running as a Docker dependency alongside the app container. The LaTeX template lives in `pressroom/` repo and is fetched at runtime — it is the master template and is rarely edited.
+Pressroom supports multiple PDF/rendering engines through a common protocol. The active engine is selected via the `PDF_ENGINE` environment variable.
 
-Output: PDF only at publish time. HTML preview is a deferred item.
+> **Why modular?** By defining a common interface (`PDFEngine` protocol), we can swap rendering engines without changing any router or service code. The routers call `generate_pdf()` regardless of which engine is active — the engine selection is an implementation detail.
+
+### 8.1 Engine Protocol
+
+The protocol defines what every PDF engine must implement:
+
+```python
+# services/pdf/base.py
+from pathlib import Path
+from typing import Protocol
+
+class PDFEngine(Protocol):
+    """
+    Protocol (interface) for document rendering engines.
+    
+    A Protocol is like an abstract base class — it defines a contract.
+    Any class that "implements" this protocol must provide all the
+    methods declared here. This is Python's way of enforcing contracts
+    without using inheritance.
+    
+    Methods:
+        slug:       The idea slug (e.g. "my-great-idea") — used for naming temp files
+        body:       The markdown content AFTER frontmatter (just the paper text)
+        frontmatter: Dict of metadata fields (title, author, gate, etc.)
+        template:   Full text of the template file fetched from GitHub
+    
+    Returns:
+        Path to the generated output file on local filesystem
+    """
+    
+    async def generate(
+        self,
+        slug: str,
+        body: str,
+        frontmatter: dict,
+        template: str,
+    ) -> Path:
+        ...
+```
+
+> **Protocol explanation:** In Python, a `Protocol` is a form of structural subtyping (also called "duck typing" at the type level). Any class that has a `generate()` method with this signature "implements" `PDFEngine`, even if it doesn't explicitly inherit from it. This makes the architecture flexible — you can add new engines without modifying existing code.
+
+### 8.2 Available Engines
+
+| Engine | Format | Template Format | Dependencies | When to Use |
+|---|---|---|---|---|
+| `pandoc` (default) | PDF via XeLaTeX | `.latex` (LaTeX) | pandoc CLI, xelatex font engine | Academic papers, formal documents |
+| `sile` | PDF via Sile | `.lufi` (Lua scripts) | sile CLI (Lua-based typesetting) | Modern typography, Lua-savvy users |
+
+> **Engine comparison:** Pandoc is the more mature option with wider template support. Sile is newer but uses Lua scripting which may be more flexible for custom layouts. The `PDF_ENGINE=pandoc` or `PDF_ENGINE=sile` env var selects which one to use at startup.
+
+### 8.3 Template Resolution Order
+
+Templates are resolved in the following priority order:
+
+1. **User's `zz-pressroom/templates/` in their workbench repo** (uploaded via UI)
+   - Highest priority — these are user-customized templates
+   - Stored as files like `whitepaper.latex` in the workbench repo
+2. **Bundled templates in the pressroom app repo** (`app/static/templates/`)
+   - Fallback if user hasn't uploaded their own
+   - Maintained by the pressroom project
+3. **Remote templates from `PRESSROOM_REPO`** (deprecated, last resort)
+   - Fetches from GitHub on each request
+   - Slow and fragile — only used if nothing else is available
+
+> **Template resolution explanation:** When the user selects a template name (e.g. "whitepaper"), the app checks:
+> 1. Does `{user-workbench}/zz-pressroom/templates/whitepaper.latex` exist? (GitHub API `gh_get()`)
+> 2. If not, does the bundled templates directory contain it?
+> 3. If not, fetch from `PRESSROOM_REPO/templates/whitepaper.latex`
+> 
+> This cascading fallback ensures the app works even if template sources are unavailable.
+
+### 8.4 Template Validation
+
+User-uploaded templates are validated before use:
+
+- **Syntax check** — template is compiled with dummy content to catch LaTeX/Lua errors
+- **Sandbox isolation** — templates cannot access host filesystem outside `/tmp/pressroom/{slug}/`
+- **Resource limits** — CPU time and memory limited by cgroups (container-level)
+
+> **Why validate templates?** User-uploaded templates could contain syntax errors that crash the PDF engine. Validation catches these errors during upload, not during the publish workflow when the author is waiting. Sandbox isolation prevents malicious templates from reading sensitive files.
 
 ---
 
-## 9. Placeholder Convention
+## 9. Multi-User Architecture
+
+### 9.1 Authentication Flow
+
+```
+┌──────────┐     ┌─────────────┐     ┌──────────────────┐     ┌──────────┐
+│  Client   │────▶│  JWT Auth   │────▶│  Token Store     │────▶│ GitHub   │
+│  (UI)    │◀────│  Middleware │◀────│  (SQLite)        │◀────│ API      │
+└──────────┘     └─────────────┘     └──────────────────┘     └──────────┘
+```
+
+**Step-by-step authentication flow:**
+
+1. **Login request** — User submits username/password via `/api/auth/login` POST
+2. **Credential validation** — Server checks credentials against:
+   - SQLite `users` table (multi-user mode), OR
+   - `APP_USER`/`APP_PASSWORD` env vars (single-user fallback)
+3. **JWT issuance** — On success, server creates a JWT containing:
+   - `user_id`: unique identifier for the user
+   - `exp`: expiration timestamp (default 480 minutes from login)
+   - The JWT is signed with `JWT_SECRET` using HS256 algorithm
+4. **Token storage in client** — Browser stores JWT in `localStorage` or `sessionStorage`
+5. **Subsequent requests** — Browser includes JWT in `Authorization: Bearer <token>` header
+6. **Middleware validation** — FastAPI middleware decodes and verifies the JWT
+7. **Per-user token lookup** — On GitHub API calls, the decrypted GitHub token is fetched from `user_tokens` table
+
+> **Why JWT?** JSON Web Tokens are a standard way to encode authentication information. The server signs the token with a secret key, and the client can present it later without needing to re-authenticate. The token expires after a configurable time, limiting the window of compromise if it's stolen.
+
+### 9.2 Per-User GitHub Token Storage
+
+GitHub tokens are encrypted at rest using AES-256-GCM with a master key derived from `JWT_SECRET`:
+
+```python
+# Encryption flow — called when a user logs in or saves a new token
+def encrypt_token(github_token: str, user_id: str) -> bytes:
+    """
+    Encrypt a GitHub personal access token for storage in SQLite.
+    
+    Why encryption? Storing tokens in plaintext is a security risk.
+    If someone gains access to the database, they should not be able
+    to read your GitHub tokens without the master key.
+    
+    AES-256-GCM provides:
+    - Confidentiality: the ciphertext cannot be decrypted without the key
+    - Integrity: GCM mode detects if the ciphertext has been tampered with
+    
+    Parameters:
+        github_token: The plain-text personal access token (e.g. "ghp_xxxx")
+        user_id: The user's ID — used to derive a unique encryption key per user
+    
+    Returns:
+        bytes: The encrypted token (IV + ciphertext + authentication tag)
+    """
+    # Derive a unique encryption key for this user from the JWT_SECRET
+    # KDF = Key Derivation Function. We use PBKDF2 to turn the JWT_SECRET
+    # into a cryptographically strong encryption key
+    master_key = derive_key(JWT_SECRET, user_id)
+    
+    # Generate a random initialization vector (IV)
+    # The IV doesn't need to be secret, but it must be unique per encryption
+    iv = secrets.token_bytes(12)  # 96-bit IV (standard for AES-GCM)
+    
+    # Encrypt using AES-GCM
+    cipher = AESGCM(master_key)
+    ciphertext = cipher.encrypt(iv, github_token.encode(), None)
+    
+    # Prepend IV to ciphertext — the IV is stored with the ciphertext
+    # so it can be used for decryption later
+    return iv + ciphertext
+
+# Decryption flow — called when making a GitHub API call
+def decrypt_token(encrypted: bytes, user_id: str) -> str:
+    """
+    Decrypt a stored GitHub token back to plain text.
+    
+    Parameters:
+        encrypted: The stored ciphertext (IV prepended)
+        user_id: The user's ID — used to derive the same encryption key
+    
+    Returns:
+        str: The decrypted plain-text token
+    """
+    master_key = derive_key(JWT_SECRET, user_id)
+    
+    # Split IV and ciphertext back out
+    iv = encrypted[:12]
+    ciphertext = encrypted[12:]
+    
+    cipher = AESGCM(master_key)
+    plaintext = cipher.decrypt(iv, ciphertext, None)
+    
+    return plaintext.decode()
+```
+
+> **Token encryption explanation:** Tokens are encrypted using AES-256-GCM, which is the industry standard for symmetric encryption. The key is derived per-user from `JWT_SECRET`, meaning:
+> - Even if two users have the same token value, their stored ciphertexts are different
+> - If someone steals the database, they can't decrypt tokens without the JWT_SECRET
+> - If someone steals the JWT_SECRET, they still need access to the database to get ciphertexts
+
+### 9.3 Rate Limits
+
+GitHub API rate limits are per-token:
+
+| Authentication Method | Rate Limit |
+|---|---|
+| Personal access token (authenticated) | 15,000 requests/hour |
+| OAuth application token | 5,000 requests/hour |
+| No authentication (unauthenticated) | 60 requests/hour |
+
+> **Why rate limits matter:** Each GitHub API call counts against the quota. If an app makes too many requests, GitHub returns `403 Forbidden` with a `rate-limit` header showing when the quota resets. The app should:
+> 1. Check `X-RateLimit-Remaining` in response headers
+> 2. Show a warning to the user if approaching the limit
+> 3. Implement caching to reduce unnecessary API calls
+
+Each user gets their own quota (their token = their quota). The app does not aggregate limits across users.
+
+---
+
+## 10. Non-Blocking UI and Async Task Preparation
+
+### 10.1 Current State — Blocking PDF Generation
+
+Currently, PDF generation uses `subprocess.run()` which **blocks the async event loop** while Pandoc/XeLaTeX runs (~5-30 seconds). During this time:
+- The HTTP request is pending (browser shows a loading spinner)
+- No other requests from this user are processed (FastAPI handles one request at a time per worker)
+
+> **What does "blocking the event loop" mean?** Python's async runtime (uvicorn) uses a single thread to process requests. When `subprocess.run()` is called, that thread is occupied waiting for Pandoc to finish. No other requests can be processed until it returns. For a single-user local app this is acceptable. For multi-user, we need non-blocking execution.
+
+### 10.2 Prepared Architecture — Async Task Queue Stubs
+
+The app includes stubs for async task queuing, ready for future concurrent processing:
+
+```python
+# services/task_queue.py (stub — currently passes through to thread pool)
+
+import asyncio
+from dataclasses import dataclass
+from typing import Any, Callable, Awaitable
+import uuid
+
+@dataclass
+class TaskResult:
+    """
+    Represents the result of an async task.
+    
+    Dataclass is like a lightweight struct — auto-generates __init__ with
+    these fields, plus __repr__ for debugging output.
+    """
+    task_id: str              # Unique identifier for tracking this task
+    status: str               # pending | running | completed | failed
+    result: Any = None        # Success result (e.g., Path to PDF file)
+    error: str = ""           # Error message if status is "failed"
+
+class TaskQueue:
+    """
+    Async task queue for non-blocking UI operations.
+    
+    Currently implements a simple thread pool executor. In the future,
+    this could be replaced with Celery, RQ, or asyncio.Queue without
+    changing any calling code — the routers just call `task_queue.submit()`.
+    
+    Why prepare this now? Adding the abstraction layer means we can swap
+    the implementation later (single-server thread pool → distributed queue)
+    without rewriting all the router code.
+    """
+    
+    async def submit(
+        self,
+        task_id: str | None,
+        fn: Callable,
+        *args,
+        **kwargs
+    ) -> TaskResult:
+        """
+        Submit a task for async execution.
+        
+        Parameters:
+            task_id: Optional unique ID. If not provided, one is generated.
+            fn: The async function to execute
+            *args, **kwargs: Arguments to pass to the function
+        
+        Returns:
+            TaskResult: Will be updated when the task completes
+        
+        How it works:
+            1. Generate a task_id if not provided
+            2. Create a TaskResult in "pending" status
+            3. Schedule fn(*args, **kwargs) to run in a thread pool
+            4. Update TaskResult when complete
+            5. Store result in SQLite tasks table for polling
+        """
+        # Generate unique ID if caller didn't provide one
+        if task_id is None:
+            task_id = str(uuid.uuid4())
+        
+        # Create a future that will hold the result
+        # asyncio.Future is like a "promise" — it will eventually produce a value
+        loop = asyncio.get_event_loop()
+        task_result = TaskResult(task_id=task_id, status="running")
+        
+        # Run the async function in a thread pool so it doesn't block the event loop
+        # run_in_executor schedules fn(*args) to run in the default thread pool
+        # await waits for that thread to finish, then returns the result
+        try:
+            result = await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
+            task_result.status = "completed"
+            task_result.result = result
+        except Exception as exc:
+            task_result.status = "failed"
+            task_result.error = str(exc)
+        
+        # Persist to SQLite so the UI can poll for status
+        await _store_task_in_db(task_id, task_result)
+        
+        return task_result
+
+
+async def _store_task_in_db(task_id: str, result: TaskResult) -> None:
+    """
+    Store task result in SQLite for UI polling.
+    
+    This is a private helper function (prefixed with _) that only
+    TaskQueue.submit() calls. It updates the `tasks` table.
+    """
+    # ... SQLite INSERT or UPDATE statement
+    pass
+```
+
+> **Task queue explanation:** The stub provides a `submit()` method that takes any async function and executes it in a thread pool. The result is stored in SQLite so the UI can poll `/api/status/{task_id}` for updates. When we're ready for real concurrency (Celery, RQ, etc.), we replace the `submit()` implementation — all the router code stays the same.
+
+### 10.3 Status Endpoints (Future)
+
+```
+GET  /api/status/{task_id}      → Poll for task status: {"status": "running", "progress": 45}
+WS   /api/ws/status             → SSE (Server-Sent Events) stream for real-time updates
+POST /api/tasks/cancel/{id}     → Abort a running task (graceful shutdown)
+```
+
+> **SSE vs polling:** Server-Sent Events (SSE) is a one-way stream from server to client. The server pushes updates as they happen. Polling (GET /api/status) requires the client to repeatedly ask. SSE is more efficient but requires WebSocket or streaming response support.
+
+---
+
+## 11. Extensible Publish Formats
+
+Future publish formats are implemented as pluggable publishers under `services/publishers/`. Each publisher implements a common interface:
+
+```python
+# services/publishers/base.py
+from typing import Protocol
+from pathlib import Path
+
+class Publisher(Protocol):
+    """
+    Protocol for document publish formats.
+    
+    Any publisher that wants to integrate with the publish workflow
+    must implement this `publish()` method. The routers call
+    `publisher.publish()` regardless of which format is selected.
+    """
+    
+    async def publish(
+        self,
+        slug: str,                     # Paper identifier (folder name)
+        version: str,                  # Version string (e.g. "v0.1-exploratory")
+        content: str,                  # Full markdown content (frontmatter + body)
+        frontmatter: dict,             # Parsed frontmatter fields
+    ) -> "PublishResult":
+        """
+        Publish a paper in a specific format.
+        
+        Parameters:
+            slug: Paper identifier — matches the folder name in workbench
+            version: Version string — determines the snapshot folder name
+            content: Full markdown with frontmatter delimiters
+            frontmatter: Parsed YAML fields (title, author, gate, etc.)
+        
+        Returns:
+            PublishResult: Metadata about the published output
+                - url: Where to view the published paper
+                - file_path: Local path to generated file (if applicable)
+                - format: Human-readable format name (e.g. "PDF", "Blog Post")
+        """
+        ...
+
+
+@dataclass
+class PublishResult:
+    """Result returned by any publisher."""
+    url: str                      # URL where the published paper can be viewed
+    file_path: Path | None        # Local file path (for PDF, DOCX, etc.)
+    format: str                   # Human-readable format name
+```
+
+> **Publisher protocol explanation:** By using a `Protocol`, any class that implements `publish()` with the correct signature can be used as a publisher. The router code doesn't care *which* publisher is used — it just calls `publisher.publish()` and handles the `PublishResult`. This follows the **Open/Closed Principle**: publishers are open for extension (add new formats) but closed for modification (existing router code doesn't change).
+
+### Planned Publishers
+
+| Publisher | Output Format | Status | Dependencies |
+|---|---|---|---|
+| `pdf` | PDF via selected engine | ✅ Implemented | pandoc/sile |
+| `blog` | Markdown blog post | 🟡 Stub (empty method) | None |
+| `docx` | Microsoft Word document | 🟡 Stub | python-docx |
+| `html` | Styled HTML page | 🔴 Deferred | Jinja2 templates |
+| `zenodo` | Zenodo deposition with DOI | 🔴 Deferred | zenodo-api client |
+
+> **Status legend:** ✅ = ready to use, 🟡 = stub exists but not functional, 🔴 = not started
+
+---
+
+## 12. Security
+
+### 12.1 Authentication — Two Modes
+
+Pressroom supports two authentication modes depending on deployment:
+
+| Mode | Method | Use Case |
+|---|---|---|
+| **Single-user** | HTTP Basic auth (default admin/pressroom) | Local Docker deployment, single author |
+| **Multi-user** | JWT Bearer tokens (`/api/auth/login`) | Shared hosting, multiple authors |
+
+> **Why two modes?** Single-user mode is simpler — one username/password pair stored in env vars. Multi-user mode requires JWT sessions and SQLite storage, which adds complexity but supports multiple independent users.
+
+#### Single-User Mode (Default)
+
+```python
+# auth.py — HTTP Basic authentication check
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from config import APP_USER, APP_PASSWORD
+
+security = HTTPBasic()  # Creates a validator that expects "Authorization: Basic ..." header
+
+def check_auth(credentials: HTTPBasicCredentials = Depends(security)) -> str:
+    """
+    Validate HTTP Basic credentials against stored username/password.
+    
+    Uses secrets.compare_digest() to prevent timing attacks.
+    A timing attack compares how long the comparison takes — if the
+    function returns early on the first wrong character vs the last,
+    an attacker can guess the password one character at a time.
+    secrets.compare_digest() always takes the same amount of time
+    regardless of where the strings differ.
+    
+    Parameters:
+        credentials: FastAPI extracts "Authorization" header and parses
+                    "username:password" into this HTTPBasicCredentials object
+    
+    Returns:
+        str: The username on success (used as user_id in multi-user mode)
+    
+    Raises:
+        HTTPException(401): If username or password is incorrect
+    """
+    # Compare username — timing-safe comparison
+    ok_user = secrets.compare_digest(
+        credentials.username.encode(), 
+        APP_USER.encode()
+    )
+    # Compare password — timing-safe comparison
+    ok_pass = secrets.compare_digest(
+        credentials.password.encode(), 
+        APP_PASSWORD.encode()
+    )
+    
+    # If either comparison failed, raise 401 Unauthorized
+    if not (ok_user and ok_pass):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password",
+            headers={"WWW-Authenticate": "Basic realm=\"Login Required\""},
+        )
+    
+    return credentials.username  # Return username for downstream use
+```
+
+> **HTTP Basic auth explanation:** When the browser makes a request, it includes an `Authorization` header with `Basic base64(username:password)`. FastAPI's `HTTPBasic` scheme extracts and decodes this into `credentials.username` and `credentials.password`. The `check_auth` dependency is called on every protected endpoint — if it raises an exception, the request is rejected.
+
+#### Multi-User Mode (JWT)
+
+```python
+# auth.py — JWT session authentication
+import jwt
+from datetime import datetime, timedelta, timezone
+from config import JWT_SECRET, JWT_EXPIRY_MINUTES
+
+def create_jwt_token(user_id: str) -> str:
+    """
+    Create a signed JWT token for an authenticated user.
+    
+    The JWT contains:
+        - user_id: Who is logging in
+        - exp: When the token expires (prevents indefinite reuse)
+        - iat: When the token was issued (for auditing)
+    
+    The signature is created using HS256 with JWT_SECRET as the key.
+    Any modification to the payload invalidates the signature.
+    
+    Parameters:
+        user_id: Unique identifier for the authenticated user
+    
+    Returns:
+        str: The encoded JWT string (to be sent in Authorization header)
+    """
+    payload = {
+        "user_id": user_id,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRY_MINUTES),
+        "iat": datetime.now(timezone.utc),
+    }
+    
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+def verify_jwt_token(token: str) -> dict:
+    """
+    Verify a JWT token and return its payload.
+    
+    Raises:
+        jwt.ExpiredSignatureError: Token has expired
+        jwt.InvalidTokenError: Token is malformed or signature invalid
+    """
+    return jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+```
+
+### 12.2 Token Security — Encryption at Rest
+
+GitHub tokens are encrypted at rest using AES-256-GCM with a master key derived from `JWT_SECRET`:
+
+> **See Section 9.2 for full encryption/decryption implementation details.**
+
+Key security properties:
+- Tokens are **never** stored in plaintext in the database
+- The master key is **derived per-user**, so even identical tokens produce different ciphertexts
+- If someone gains access to the SQLite database, they cannot read tokens without `JWT_SECRET`
+- Tokens are **never** returned in API responses (only stored encrypted)
+
+### 12.3 Input Validation
+
+All request bodies are validated with Pydantic models before reaching endpoint logic:
+
+```python
+# models.py — Request/Response validation models
+from pydantic import BaseModel, Field
+from typing import Optional
+
+class PaperSaveRequest(BaseModel):
+    """
+    Request model for saving paper metadata.
+    
+    Pydantic validates incoming JSON against this schema.
+    If any field is missing or has the wrong type, FastAPI
+    automatically returns a 422 Unprocessable Entity response
+    with details about which fields failed validation.
+    """
+    title: str = Field(..., min_length=1, max_length=200)  # ... means required
+    gate: str = Field(..., pattern="^(alpha|exploratory|draft|review|published)$")
+    version: Optional[str] = None
+    # ... more fields
+
+class PublishRequest(BaseModel):
+    """Request model for publishing a paper."""
+    version: str = Field(..., min_length=1)  # Required, must be non-empty
+```
+
+> **Why Pydantic?** Pydantic validates data at runtime. Without it, a malformed request (e.g., `gate: "invalid"`) would reach the endpoint logic and cause a confusing error. With Pydantic, the error is caught early with a clear message: `"gate: String should match pattern '^(alpha|exploratory|draft|review|published)$'"`.
+
+### 12.4 Template Sandboxing
+
+User-uploaded templates are rendered in an isolated subprocess with:
+- **No network access** — Pandoc/Sile cannot fetch external resources
+- **Filesystem restricted to `/tmp/pressroom/{slug}/`** — templates cannot read other files
+- **Resource limits** — CPU time and memory limited by Docker cgroups
+
+> **Why sandbox?** A malicious or buggy template could:
+> - Read sensitive files on the host filesystem
+> - Make network requests (exfiltrating data)
+> - Consume all CPU/memory, crashing the container
+> Sandboxing prevents all of these.
+
+---
+
+## 13. Logging and Observability
+
+### 13.1 Structured Logging — JSON Format
+
+All log output is JSON-formatted for easy parsing by log aggregation tools (Fluentd, Logstash, etc.):
+
+```python
+# logging_config.py — Application-wide logging setup
+import logging
+import json
+from datetime import datetime, timezone
+
+class JsonFormatter(logging.Formatter):
+    """
+    Custom log formatter that outputs JSON instead of plain text.
+    
+    Example output:
+    {
+        "timestamp": "2026-04-25T10:00:00Z",
+        "level": "INFO",
+        "logger": "pressroom.routers.papers",
+        "message": "Paper loaded successfully",
+        "user_id": "user_abc123",
+        "request_id": "req_xyz789",
+        "slug": "my-paper",
+        "duration_ms": 234
+    }
+    
+    Why JSON? Structured logs can be queried and filtered by log aggregation tools.
+    You can search for all ERROR-level logs for a specific user, or calculate
+    average response times per endpoint.
+    """
+    
+    def format(self, record: logging.LogRecord) -> str:
+        # Build a dict of log entry fields
+        log_entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),  # ISO 8601 format
+            "level": record.levelname,                             # INFO, ERROR, etc.
+            "logger": record.name,                                 # Which module logged this
+            "message": record.getMessage(),                        # The log message
+        }
+        
+        # Add extra fields if present (request_id, user_id, slug, duration_ms)
+        if hasattr(record, "user_id"):
+            log_entry["user_id"] = record.user_id
+        if hasattr(record, "request_id"):
+            log_entry["request_id"] = record.request_id
+        if hasattr(record, "slug"):
+            log_entry["slug"] = record.slug
+        if hasattr(record, "duration_ms"):
+            log_entry["duration_ms"] = record.duration_ms
+        
+        return json.dumps(log_entry)
+
+
+def setup_logging() -> None:
+    """
+    Configure application-wide logging.
+    
+    Called once at application startup in main.py.
+    Sets up:
+        - JSON formatter on all handlers
+        - Root logger at INFO level
+        - Console handler (stdout for Docker)
+    """
+    logger = logging.getLogger("pressroom")
+    logger.setLevel(logging.INFO)
+    
+    # Console handler — logs to stdout (Docker captures this)
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter())
+    logger.addHandler(handler)
+```
+
+> **Logging explanation:** Every log call includes contextual fields (`user_id`, `request_id`, `slug`) that are attached to the log record before it's formatted. This allows tracing a single request across multiple log lines — all entries with the same `request_id` belong to the same HTTP request.
+
+### 13.2 Log Levels and Usage
+
+| Level | When Used | Example |
+|---|---|---|
+| `DEBUG` | Detailed diagnostic information | GitHub API request/response bodies, template resolution paths, SQLite query results |
+| `INFO` | Normal operation milestones | Paper loaded, metadata saved, PDF generation started/completed |
+| `WARNING` | Unexpected but handled situations | Rate limit approaching, deprecated config value detected, template validation warning |
+| `ERROR` | Operation failed but app can continue | GitHub API returned 500, PDF engine crashed, auth credential mismatch |
+| `CRITICAL` | App cannot continue | Database corruption detected, master key compromised, out of disk space |
+
+> **Log level guidance:** 
+> - `DEBUG` — use sparingly; it generates a lot of output
+> - `INFO` — use for every significant operation (load, save, generate, publish)
+> - `WARNING` — use when something unexpected happens but the app can recover
+> - `ERROR` — use when an operation fails and the user sees an error
+> - `CRITICAL` — use when the app is in an unrecoverable state
+
+### 13.3 Request ID Tracing
+
+Every HTTP request is assigned a UUID. The ID is:
+1. Generated by FastAPI middleware on every incoming request
+2. Attached to the logging `LogRecord` for every log line in that request's lifetime
+3. Returned in the `X-Request-ID` response header for debugging
+
+```python
+# Example: middleware that adds request_id to every log record in the request
+import uuid
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Generate a unique ID for this request
+        request_id = str(uuid.uuid4())
+        
+        # Make it available to logging via context var
+        request.state.request_id = request_id
+        
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id  # Return to client
+        
+        return response
+```
+
+> **Why request IDs?** In a multi-service or even a single-service app with many log lines per request, the request ID lets you filter logs to see all entries for a specific request. Search logs for `request_id: "abc-123"` and you'll see the complete lifecycle of that one HTTP call.
+
+---
+
+## 14. Configuration Validation
+
+### 14.1 Startup Validation — Fail Fast
+
+All environment variables are validated at application startup. Missing required variables cause a fatal error with a descriptive message:
+
+```python
+# config.py — Environment variable validation
+import os
+import sys
+
+# REQUIRED_VARS lists every env var that must be present for the app to function.
+# If any are missing, the app exits immediately rather than failing later
+# with a confusing error deep in the call stack.
+REQUIRED_VARS = [
+    "IDEAS_WORKBENCH_GIT_TOKEN",   # Needed to read/write workbench repo
+    "PRESSROOM_PUBS_GIT_TOKEN",    # Needed to read/write pubs repo
+]
+
+def validate_config() -> None:
+    """
+    Validate that all required environment variables are set.
+    
+    This is called at the top of main.py, before the FastAPI app starts.
+    If validation fails, sys.exit(1) is called and the container stops.
+    
+    Why fail fast? It's better to fail on startup (where the operator
+    can see the error immediately) than to fail hours later when a
+    user tries to load a paper.
+    """
+    missing = []
+    for var in REQUIRED_VARS:
+        if var not in os.environ:
+            missing.append(var)
+    
+    if missing:
+        # Print a helpful error message showing which vars are missing
+        error_msg = (
+            f"Missing required environment variables: {', '.join(missing)}\n"
+            f"Please set these in your .env file and restart the container."
+        )
+        print(error_msg)
+        sys.exit(1)  # Exit with error code 1 (failure)
+    
+    # Log that validation passed
+    logging.info("Configuration validated successfully")
+
+# Call at module import time — this runs before any endpoints are served
+validate_config()
+```
+
+> **Fail-fast principle:** By validating config at startup, we catch configuration errors immediately. The alternative is to fail deep in a PDF generation call with an error like `"GitHub token not found"` — much better to fail on startup with `"Missing IDEAS_WORKBENCH_GIT_TOKEN"`.
+
+### 14.2 Hot-Reload Support (Future)
+
+Configuration changes detected in `.env` file will trigger a reload of config values without restarting the container:
+
+- Implemented via `watchdog` file watcher monitoring `.env`
+- JWT_SECRET changes require a full restart (cannot decrypt existing tokens with new key)
+- Other config changes (token values, repo URLs) are picked up on next request
+
+> **Why hot-reload?** It allows updating tokens or repo URLs without restarting the container (which causes a brief downtime). The trade-off is added complexity and the risk of inconsistent state during reload.
+
+---
+
+## 15. Testing
+
+### 15.1 Test Framework — pytest + pytest-asyncio
+
+```
+tests/
+├── conftest.py                  # Shared fixtures, mock GitHub API client
+├── test_frontmatter.py          # Frontmatter parsing/writing/derivation tests
+├── test_pdf_engine.py           # PDF engine protocol and pandoc/sile tests
+├── test_papers_router.py        # Paper CRUD endpoint tests (mock HTTP)
+├── test_auth.py                 # JWT + HTTP Basic auth tests
+├── test_config.py              # Env var validation tests
+└── integration/
+    └── test_publish_flow.py    # End-to-end publish workflow test
+```
+
+> **Test directory structure:** 
+> - `conftest.py` — shared fixtures (mock HTTP client, test database)
+> - Unit tests (`test_*.py`) — test individual functions/classes in isolation
+> - Integration tests (`integration/`) — test multi-step workflows with real GitHub API calls (mocked)
+
+### 15.2 Test Coverage Targets
+
+| Module | Target Coverage | Why |
+|---|---|---|
+| `services/frontmatter.py` | 100% | Core logic — every parse/write/derive path must be tested |
+| `services/pdf/pandoc_engine.py` | 90% | PDF generation is complex; test all template/engine combos |
+| `routers/papers.py` | 85% | HTTP endpoints; test valid/invalid inputs, error cases |
+| `github.py` (via mocks) | 95% | Every API call path; mock httpx to test without real GitHub |
+| **Overall** | **85%** | Reasonable target for a small project |
+
+> **What is test coverage?** Coverage measures what percentage of code lines are executed by tests. 100% coverage doesn't mean the code is correct — it means every line was touched by at least one test. The goal is to catch regressions: if someone changes `frontmatter.py` and breaks parsing, the test suite should fail.
+
+### 15.3 Example Test — Frontmatter Parsing
+
+```python
+# tests/test_frontmatter.py
+import pytest
+from services.frontmatter import parse_frontmatter, write_frontmatter, apply_derived_fields
+
+def test_parse_frontmatter_with_yaml():
+    """
+    Test that parse_frontmatter correctly splits frontmatter YAML from body.
+    
+    Input: markdown with --- delimited YAML block at top
+    Expected: (dict of parsed YAML fields, string of body text)
+    """
+    markdown = """---
+title: My Paper
+author: John Doe
+gate: exploratory
+---
+
+# Introduction
+
+This is the paper body.
+"""
+    
+    fields, body = parse_frontmatter(markdown)
+    
+    # Verify frontmatter was parsed correctly
+    assert fields["title"] == "My Paper"
+    assert fields["author"] == "John Doe"
+    assert fields["gate"] == "exploratory"
+    
+    # Verify body starts after the closing ---
+    assert body.startswith("# Introduction")
+
+def test_parse_frontmatter_no_yaml():
+    """
+    Test that parse_frontmatter returns empty dict and full text
+    when no frontmatter delimiter is found.
+    """
+    markdown = "# Just a markdown file\n\nNo frontmatter here."
+    
+    fields, body = parse_frontmatter(markdown)
+    
+    assert fields == {}  # Empty dict when no YAML
+    assert body == markdown  # Full text returned as body
+
+def test_apply_derived_fields_gate_to_status():
+    """
+    Test that apply_derived_fields converts gate to uppercase status.
+    
+    Input: {"gate": "exploratory"}
+    Expected: {"gate": "exploratory", "status": "EXPLORATORY"}
+    """
+    fields = {"gate": "exploratory"}
+    result = apply_derived_fields(fields)
+    
+    assert result["status"] == "EXPLORATORY"
+    assert result["gate"] == "exploratory"  # Original field preserved
+
+def test_apply_derived_fields_version_auto_fill():
+    """
+    Test that version is auto-filled from gate if not provided.
+    """
+    fields = {"gate": "draft"}
+    result = apply_derived_fields(fields)
+    
+    assert result["version"] == "v0.2-draft"  # From GATE_VERSIONS mapping
+```
+
+> **Test explanation:** Each test function:
+> 1. Sets up input data (markdown string, fields dict)
+> 2. Calls the function under test
+> 3. Asserts the output matches expected values
+> 
+> If any assertion fails, pytest reports which line failed and what the actual value was.
+
+---
+
+## 16. Docker and Deployment
+
+### 16.1 Multi-Stage Build — Smaller Image
+
+```dockerfile
+# Dockerfile — multi-stage build to minimize final image size
+
+# ── Stage 1: builder ──────────────────────────────────────────────
+# Install Pandoc and LaTeX dependencies in a full Python image.
+# These are large (~500MB) but we only need the binaries, not the
+# full Python environment, in the final image.
+FROM python:3.12-slim AS builder
+
+# Install pandoc and basic LaTeX packages
+RUN apt-get update && apt-get install -y \
+    pandoc \
+    texlive-base \
+    texlive-xetex \
+    texlive-fonts-recommended \
+    texlive-fonts-extra \
+    liberation-fonts \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Stage 2: runtime ─────────────────────────────────────────────
+# Copy only the binaries we need from the builder stage.
+# The final image is ~150MB instead of ~700MB.
+FROM python:3.12-slim AS runtime
+
+COPY --from=builder /usr/bin/pandoc /usr/bin/pandoc
+COPY --from=builder /usr/bin/xelatex /usr/bin/xelatex
+COPY --from=builder /usr/local/lib /usr/local/lib
+
+# Copy application code
+COPY app/ /app/
+
+# Install Python dependencies (much smaller than installing all dev deps)
+RUN pip install --no-cache-dir -r app/requirements.txt
+
+# Create temp directory and non-root user for security
+RUN mkdir -p /tmp/pressroom && chown appuser:appuser /tmp/pressroom
+USER appuser
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+> **Multi-stage build explanation:** Docker builds happen in stages. The `builder` stage installs large dependencies (Pandoc, LaTeX). The `runtime` stage copies only the needed binaries, resulting in a much smaller final image (~150MB vs ~700MB). This is important for:
+> - Faster container pulls
+> - Smaller attack surface (fewer packages = fewer vulnerabilities)
+> - Lower storage costs
+
+### 16.2 Health Check
+
+```dockerfile
+# Add to Dockerfile for Docker health monitoring
+HEALTHCHECK --interval=60s --timeout=5s --start-period=10s \
+  CMD curl -f http://localhost:8000/api/health || exit 1
+```
+
+```python
+# main.py — Health check endpoint
+@app.get("/api/health")
+async def health_check():
+    """
+    Simple health check for Docker monitoring.
+    
+    Returns 200 OK with {"status": "ok"}.
+    Docker (or Kubernetes) calls this periodically to determine
+    if the container is healthy. If it fails 3 times, the
+    container is marked as unhealthy and restarted.
+    """
+    return {"status": "ok"}
+```
+
+> **Health check explanation:** Docker's `HEALTHCHECK` instruction runs the specified command every 60 seconds. If `curl` returns non-zero (the endpoint is down), Docker marks the container as `unhealthy`. After 3 consecutive failures, Docker restarts the container. This provides automatic recovery from crashes.
+
+### 16.3 Docker Compose with Data Volume
+
+```yaml
+# docker-compose.yml
+version: "3.8"
+
+services:
+  pressroom:
+    build: ./app
+    image: pressroom:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - pressroom-data:/app/data    # SQLite DB and temp files persist across restarts
+    env_file:
+      - .env                        # Load environment variables from .env file
+    restart: unless-stopped           # Auto-restart on failure or system reboot
+
+volumes:
+  pressroom-data:                     # Named volume — persists /app/data
+```
+
+> **Volume explanation:** Without the `volumes` directive, when the container is recreated (e.g., after a code update), the SQLite database in `/app/data` would be lost. The named volume `pressroom-data` persists the database across container recreates. Data survives even if the container is deleted.
+
+---
+
+## 17. Placeholder Convention
 
 All documents in the system use the following placeholder convention for incomplete content:
 
@@ -206,29 +1342,67 @@ All documents in the system use the following placeholder convention for incompl
 [PLACEHOLDER: description of exactly what belongs here, including scope and context]
 ```
 
-Placeholders must be descriptive. The following are not acceptable:
+> **Why descriptive placeholders?** A placeholder like `[PLACEHOLDER: Add introduction paragraph explaining the core thesis about AI-assisted research]` tells the author exactly what's needed. Vague placeholders like `[TODO]` or `[content here]` don't provide enough guidance and are easily forgotten.
+
+Placeholders must be descriptive. The following are **not acceptable**:
 ```
-[PLACEHOLDER: content here]
-[PLACEHOLDER: TODO]
+[PLACEHOLDER: content here]     ❌ Too vague
+[PLACEHOLDER: TODO]             ❌ Doesn't explain what's needed
+[PLACEHOLDER: fix later]        ❌ Doesn't specify what to fix
+```
+
+The following **are acceptable**:
+```
+[PLACEHOLDER: Add 2-3 paragraph introduction explaining the core thesis   ✅ Clear and actionable
+about AI-assisted research methodology]
+
+[PLACEHOLDER: Replace this stub with the full literature review section,  ✅ Describes scope
+citing at least 5 recent papers from 2024-2026]
 ```
 
 ---
 
-## 10. Deferred Items
+## 18. Deferred Items
 
-- Zenodo DOI minting (token stored in env, nothing wired up)
-- HTML preview before PDF generation
-- Multiple document style templates (white paper is the first)
-- pressroom-pubs web frontend / index page
-- GitHub Actions publish workflow (currently Pressroom pushes directly via API)
+Items not yet implemented, tracked here for future reference:
+
+| Item | Status | Notes |
+|---|---|---|
+| HTML preview before PDF generation | 🔴 Deferred | Requires Jinja2 template rendering |
+| Multiple document style templates | 🟡 Partial | Template upload added; only whitepaper template exists |
+| pressroom-pubs web frontend / index page | 🔴 Deferred | Static site generator for published output |
+| GitHub Actions publish workflow | 🟡 Partial | Stubs in place; direct API push is current implementation |
+| Zenodo DOI minting | 🔴 Deferred | Requires Zenodo API integration and token storage |
+
+> **Status legend:** ✅ = ready to use, 🟡 = partially implemented, 🟡 = stub exists, 🔴 = not started
 
 ---
 
-## 11. Open Questions
+## 19. Open Questions
 
-- Whether `zz-pressroom/author.yaml` is a single author file or supports multiple author profiles
-- Zenodo integration scope and timing
+Items requiring decisions before implementation:
+
+| Question | Impact | Current Thinking |
+|---|---|---|
+| Whether `zz-pressroom/author.yaml` supports multiple author profiles | Multi-user auth design | Single profile per user for now; future: `profiles/` subfolder |
+| Zenodo integration scope and timing | Publish workflow extension | Low priority; DOI minting can be manual for v0.1 |
+| Per-user vs shared pressroom-pubs repo | Repository architecture | Per-user for isolation; shared for simplicity — decision pending user feedback |
 
 ---
 
-*This spec was drafted from conversation history on 2026-04-25 and finalised the same day. Ready to promote to `v0.1-exploratory` once dropped into ideas-workbench and reviewed in context.*
+## Appendix A: Glossary
+
+| Term | Definition |
+|---|---|
+| **slug** | A URL-friendly identifier derived from the idea name (e.g., "my-great-idea" becomes `my-great-idea`) |
+| **gate** | A maturity level (alpha, exploratory, draft, review, published) that determines what content is expected |
+| **version string** | A semver-style identifier combining major.minor with gate (e.g., `v0.1-exploratory`) |
+| **frontmatter** | YAML metadata block at the top of a markdown file, delimited by `---` |
+| **snapshot** | A frozen copy of a paper's current state, stored in a versioned folder |
+| **mirror** | Copying a snapshot from ideas-workbench to pressroom-pubs |
+| **workbench** | The user's private GitHub repo where ideas are developed |
+| **pubs** | The public GitHub repo where published snapshots are stored |
+
+---
+
+*This spec was updated on 2026-04-25 to reflect multi-user architecture, modular PDF engine, security requirements, testing strategy, non-blocking UI preparation, and configuration validation. Written with extra detail to aid understanding for a developer learning to code.*
