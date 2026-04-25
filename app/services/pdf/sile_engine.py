@@ -42,6 +42,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from exceptions import PDFGenerationError
+
 
 class SileEngine:
     """
@@ -63,47 +65,64 @@ class SileEngine:
         template: str,
     ) -> Path:
         """
-        Generate PDF using Sile + Lua templates.
+        Generate a PDF using the Sile typesetting system.
 
         PARAMETERS:
-        - slug: Paper identifier (e.g., "my-great-idea")
-          Used to create isolated temp directory /tmp/pressroom/{slug}/
-        - body: Markdown content AFTER frontmatter
-          This is the actual paper text to be rendered
-        - frontmatter: Dict of YAML metadata fields
-          Contains title, author, gate, version, etc.
-        - template: Full text of the Sile/Lua template file
+        - slug:        Paper identifier — used to name the isolated temp directory
+        - body:        Markdown text after the frontmatter block
+        - frontmatter: Parsed YAML metadata (title, author, gate, version, …)
+        - template:    Full content of the Sile/Lua (.lufi) template file
 
         RETURNS:
-        - Path to generated PDF file on local filesystem
+        - Path: absolute path to the generated PDF (/tmp/pressroom/{slug}/output.pdf)
 
-        SIDE EFFECTS:
-        - Creates temp directory /tmp/pressroom/{slug}/
-        - Writes markdown content to input.md
-        - Writes template to template.lufi
-        - Runs sile CLI to generate PDF
-        - Cleans up temp files after generation
+        RAISES:
+        - RuntimeError: if sile exits with a non-zero return code (stderr included)
 
-        COMMAND LINE EXAMPLE:
-            sile -o output.pdf \\
-                template.lufi \\
-                input.md
-
-        TODO: Implement:
-        1. Create temp dir /tmp/pressroom/{slug}/
-        2. Write frontmatter + body to input.md
-        3. Write template to template.lufi (note: .lufi extension for Sile)
-        4. Run subprocess with sile CLI arguments
-        5. Return Path to output.pdf
-
-        COMPARISON WITH PandocEngine:
-        - Both must return Path to the same output location
-        - Pandoc uses .latex templates, Sile uses .lufi templates
-        - Pandoc uses xelatex backend, Sile uses Lua runtime
-        - Output PDF format is identical (both produce standard PDF)
-
-        ERROR HANDLING:
-        - If sile subprocess returns non-zero exit code, raise PDFGenerationError
-        - Capture stderr for error message
+        COMMAND EXECUTED:
+            sile template.lufi -o output.pdf
         """
-        pass
+        import asyncio
+        import yaml
+
+        # ── 1. Prepare isolated temp directory ───────────────────────────────
+        work_dir = Path(tempfile.gettempdir()) / "pressroom" / slug
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        input_md   = work_dir / "input.md"
+        tmpl_lufi  = work_dir / "template.lufi"
+        output_pdf = work_dir / "output.pdf"
+
+        # ── 2. Write input markdown ───────────────────────────────────────────
+        fm_yaml = yaml.dump(frontmatter, allow_unicode=True, default_flow_style=False)
+        input_md.write_text(f"---\n{fm_yaml}---\n\n{body}", encoding="utf-8")
+
+        # ── 3. Write Sile/Lua template ────────────────────────────────────────
+        tmpl_lufi.write_text(template, encoding="utf-8")
+
+        # ── 4. Run sile ───────────────────────────────────────────────────────
+        cmd = [
+            "sile",
+            str(tmpl_lufi),
+            "-o", str(output_pdf),
+        ]
+
+        loop = asyncio.get_event_loop()
+        proc = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=str(work_dir),
+            ),
+        )
+
+        if proc.returncode != 0:
+            raise PDFGenerationError(
+                f"sile failed for '{slug}':\n{proc.stderr}",
+                engine="sile",
+                exit_code=proc.returncode,
+            )
+
+        return output_pdf

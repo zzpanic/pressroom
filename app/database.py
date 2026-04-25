@@ -36,7 +36,7 @@ DATABASE_PATH = "/app/data/pressroom.db"
 """
 Path to the SQLite database file.
 
-This path is mounted as a Docker volume (pressroom-data) so data persists
+This path is mounted as a Docker volume so data persists
 across container restarts. If the directory doesn't exist, init_db() creates it.
 """
 
@@ -85,8 +85,6 @@ Columns:
 - encrypted_token: Ciphertext — meaningless without the master key
 - repo_url: Which repository this token authenticates (e.g., "johndoe/ideas-workbench")
 - updated_at: When the token was last rotated
-
-TODO: Implement encryption using cryptography.hazmat.primitives.ciphers.AESGCM
 """
 
 TASKS_TABLE_SCHEMA = """
@@ -113,8 +111,6 @@ Columns:
 - result: JSON blob on success (e.g., {"pdf_path": "/tmp/pressroom/my-paper/my-paper.pdf"})
 - error: Error message string if status is 'failed'
 - created_at / updated_at: Timestamps for debugging and SLA tracking
-
-TODO: Implement task status updates in services/task_queue.py
 """
 
 
@@ -131,13 +127,6 @@ def init_db() -> None:
     1. The /app/data/ directory exists (creates it if needed)
     2. All three tables are created (no-op if they already exist)
 
-    TODO: Replace the 'pass' statements with actual implementation:
-    - Import os and sqlite3
-    - Create /app/data/ directory using os.makedirs(..., exist_ok=True)
-    - Open sqlite3 connection to DATABASE_PATH
-    - Execute each schema string as a SQL statement
-    - Commit and close
-
     SIDE EFFECTS:
     - Creates /app/data/ directory on first run
     - Creates database file at DATABASE_PATH on first run
@@ -150,25 +139,21 @@ def init_db() -> None:
         from database import init_db
         init_db()  # Creates tables if they don't exist
     """
-    # TODO: Implement database initialization
-    # 1. Create data directory if it doesn't exist
-    # Path(DATABASE_PATH).parent.mkdir(parents=True, exist_ok=True)
-    
-    # 2. Open connection
-    # conn = sqlite3.connect(DATABASE_PATH)
-    
-    # 3. Execute schemas
-    # conn.execute(USERS_TABLE_SCHEMA)
-    # conn.execute(USER_TOKENS_TABLE_SCHEMA)
-    # conn.execute(TASKS_TABLE_SCHEMA)
-    
-    # 4. Commit and close
-    # conn.commit()
-    # conn.close()
-    pass
+    # Create data directory if it doesn't exist
+    Path(DATABASE_PATH).parent.mkdir(parents=True, exist_ok=True)
+
+    # Open connection and create tables
+    conn = sqlite3.connect(DATABASE_PATH)
+    try:
+        conn.execute(USERS_TABLE_SCHEMA)
+        conn.execute(USER_TOKENS_TABLE_SCHEMA)
+        conn.execute(TASKS_TABLE_SCHEMA)
+        conn.commit()
+    finally:
+        conn.close()
 
 
-# ──────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
 # CONNECTION MANAGEMENT
 # ──────────────────────────────────────────────────────────────────
 
@@ -185,12 +170,6 @@ def get_connection() -> Generator[sqlite3.Connection, None, None]:
         print(row["username"])  # Can access by column name
         print(row[0])          # Can also access by index
 
-    TODO: Replace the 'pass' statements with actual implementation:
-    - Open connection: conn = sqlite3.connect(DATABASE_PATH)
-    - Set row factory: conn.row_factory = sqlite3.Row
-    - Yield conn
-    - Close conn in finally block
-
     USAGE EXAMPLE:
         # As a context manager (recommended):
         with get_connection() as conn:
@@ -202,29 +181,22 @@ def get_connection() -> Generator[sqlite3.Connection, None, None]:
 
     SPEC REFERENCE: §7.1 "Stateless Design with Lightweight User Store"
     """
-    # TODO: Implement connection factory
-    # conn = sqlite3.connect(DATABASE_PATH)
-    # conn.row_factory = sqlite3.Row
-    # try:
-    #     yield conn
-    # finally:
-    #     conn.close()
-    pass
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 # ──────────────────────────────────────────────────────────────────
-# HELPER FUNCTIONS (FUTURE)
+# HELPER FUNCTIONS
 # ──────────────────────────────────────────────────────────────────
 
 async def create_user(user_id: str, username: str, password_hash: str) -> None:
     """
     Create a new user account.
 
-    TODO: Implement
-    1. Connect to database using get_connection()
-    2. Execute INSERT INTO users (user_id, username, password_hash) VALUES (?, ?, ?)
-    3. Commit and close
-    
     SECURITY NOTE:
     - password_hash should be generated using bcrypt.hashpw(password, bcrypt.gensalt())
     - NEVER accept plain-text passwords — always hash before storing
@@ -232,96 +204,161 @@ async def create_user(user_id: str, username: str, password_hash: str) -> None:
 
     CALLED BY: auth_store.py register_user() endpoint
     """
-    # TODO: Implement user creation
-    pass
+    import logging
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "INSERT INTO users (user_id, username, password_hash) VALUES (?, ?, ?)",
+                (user_id, username, password_hash)
+            )
+            conn.commit()
+    except Exception as e:
+        # Log error but don't expose sensitive info
+        logging.error(f"Database error creating user {username}: {str(e)}")
+        raise RuntimeError(f"Failed to create user: {str(e)}")
 
 
 async def get_user_by_username(username: str) -> dict | None:
     """
     Look up a user by username.
 
-    TODO: Implement
-    1. Connect to database
-    2. Execute SELECT * FROM users WHERE username = ?
-    3. Return row as dict (or None if not found)
-    
     RETURN VALUE:
     - dict with keys: user_id, username, password_hash, created_at
     - None if username not found
 
     CALLED BY: auth_store.py verify_credentials() during login
     """
-    # TODO: Implement user lookup
-    pass
+    import logging
+    try:
+        with get_connection() as conn:
+            row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+            return dict(row) if row else None
+    except Exception as e:
+        # Log error but don't expose sensitive info  
+        logging.error(f"Database error retrieving user {username}: {str(e)}")
+        raise RuntimeError(f"Failed to retrieve user: {str(e)}")
 
 
 async def store_user_token(user_id: str, encrypted_token: str, repo_url: str) -> None:
     """
     Store an encrypted GitHub token for a user.
 
-    TODO: Implement (upsert — insert or replace)
-    1. Connect to database
-    2. Execute INSERT OR REPLACE INTO user_tokens VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-    
     PARAMETERS:
     - user_id: The user's ID (from users table)
     - encrypted_token: AES-256-GCM ciphertext of the GitHub token
-    - repo_url: Which repository this token authenticates
+    - repo_url: Which repository this token authenticates for
 
     SECURITY NOTE:
     - The encrypted_token is NEVER decrypted before storage — it stays ciphertext
-    - Decryption happens at request time in auth_store.py decrypt_token()
+    - Decryption happens at request time in auth_store.py get_decrypted_token()
     """
-    # TODO: Implement token storage
-    pass
+    import logging
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO user_tokens (user_id, encrypted_token, repo_url) VALUES (?, ?, ?)",
+                (user_id, encrypted_token, repo_url)
+            )
+            conn.commit()
+    except Exception as e:
+        # Log error but don't expose sensitive info
+        logging.error(f"Database error storing token for user {user_id}: {str(e)}")
+        raise RuntimeError(f"Failed to store user token: {str(e)}")
 
 
 async def get_user_token(user_id: str) -> str | None:
     """
     Retrieve a stored encrypted GitHub token for a user.
 
-    TODO: Implement
-    1. Connect to database
-    2. Execute SELECT encrypted_token FROM user_tokens WHERE user_id = ?
-    3. Return the ciphertext (or None if not found)
-    
     RETURN VALUE:
     - str: The encrypted token ciphertext (to be decrypted by auth_store.py)
     - None: If no token exists for this user
 
     CALLED BY: auth_store.py get_decrypted_token() before GitHub API calls
     """
-    # TODO: Implement token retrieval
-    pass
+    import logging
+    try:
+        with get_connection() as conn:
+            row = conn.execute("SELECT encrypted_token FROM user_tokens WHERE user_id = ?", (user_id,)).fetchone()
+            return row["encrypted_token"] if row else None
+    except Exception as e:
+        # Log error but don't expose sensitive info
+        logging.error(f"Database error retrieving token for user {user_id}: {str(e)}")
+        raise RuntimeError(f"Failed to retrieve user token: {str(e)}")
+
+
+async def validate_user_credentials(username: str, plain_password: str) -> bool:
+    """
+    Validate user credentials by checking the plain-text password against the stored bcrypt hash.
+
+    PARAMETERS:
+    - username: The username to validate
+    - plain_password: The plain-text password submitted by the user (NOT a hash)
+
+    RETURNS:
+    - bool: True if the password matches the stored bcrypt hash, False otherwise
+
+    SECURITY NOTE:
+    - Uses bcrypt.checkpw() via auth.verify_password() — never a plain string compare
+    - Returns False (not an exception) when the user doesn't exist, to avoid timing leaks
+
+    SPEC REFERENCE: §7.1 "Authentication Flow" — Credential Validation
+    """
+    import logging
+    # Import here to avoid a circular import (auth imports config; database doesn't import auth at module level)
+    from auth import verify_password
+    try:
+        user = await get_user_by_username(username)
+        if not user:
+            return False
+
+        # Use bcrypt comparison — plain string equality would always fail against a bcrypt hash
+        return verify_password(plain_password, user['password_hash'])
+
+    except Exception as e:
+        # Log error but don't expose sensitive info
+        logging.error(f"Database error validating credentials for user {username}: {str(e)}")
+        raise RuntimeError(f"Failed to validate user credentials: {str(e)}")
 
 
 async def create_task(task_id: str, user_id: str) -> None:
     """
     Create a new task record with 'pending' status.
 
-    TODO: Implement
-    1. Connect to database
-    2. Execute INSERT INTO tasks (task_id, user_id, status) VALUES (?, ?, 'pending')
-    
     CALLED BY: services/task_queue.py TaskQueue.submit() before executing task
     """
-    # TODO: Implement task creation
-    pass
+    import logging
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "INSERT INTO tasks (task_id, user_id, status) VALUES (?, ?, 'pending')",
+                (task_id, user_id)
+            )
+            conn.commit()
+    except Exception as e:
+        logging.error(f"Database error creating task {task_id} for user {user_id}: {e}")
+        raise RuntimeError(f"Failed to create task: {e}")
 
 
 async def update_task_status(task_id: str, status: str, result: dict = None, error: str = None) -> None:
     """
     Update a task's status, result, or error message.
 
-    TODO: Implement
-    1. Connect to database
-    2. Execute UPDATE tasks SET status = ?, result = ?, error = ?, updated_at = CURRENT_TIMESTAMP WHERE task_id = ?
-    3. Commit and close
-    
     STATUS TRANSITIONS:
     - pending -> running (when task starts)
     - running -> completed (when task succeeds)
     - running -> failed (when task raises exception)
+
+    CALLED BY: services/task_queue.py TaskQueue.submit() after executing task
     """
-    # TODO: Implement task status update
-    pass
+    import logging
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "UPDATE tasks SET status = ?, result = ?, error = ?, updated_at = CURRENT_TIMESTAMP WHERE task_id = ?",
+                (status, result, error, task_id)
+            )
+            conn.commit()
+    except Exception as e:
+        logging.error(f"Database error updating task {task_id} to status '{status}': {e}")
+        raise RuntimeError(f"Failed to update task status: {e}")

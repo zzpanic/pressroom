@@ -23,6 +23,7 @@ from config import (
     GITHUB_BRANCH,
     GITHUB_API,
 )
+from exceptions import GitHubAPIError, GitHubRateLimitError
 
 
 # ── Auth header sets ──────────────────────────────────────────────────────────
@@ -43,30 +44,52 @@ PUBS_HEADERS      = _make_headers(PRESSROOM_PUBS_GIT_TOKEN)
 
 # ── Read helpers ──────────────────────────────────────────────────────────────
 
+def _raise_for_github_status(r: httpx.Response) -> None:
+    """Raise a structured PressroomException for any non-2xx GitHub response."""
+    if r.status_code == 404:
+        return  # callers handle 404 by checking for None return value
+    if r.status_code == 403:
+        reset_at = r.headers.get("X-RateLimit-Reset")
+        if r.headers.get("X-RateLimit-Remaining") == "0":
+            raise GitHubRateLimitError(reset_at=reset_at)
+        raise GitHubAPIError(
+            f"GitHub API returned 403 Forbidden — check token permissions.",
+            status_code=403,
+            response_body=r.text[:500],
+        )
+    if not r.is_success:
+        raise GitHubAPIError(
+            f"GitHub API error {r.status_code} for {r.url}",
+            status_code=502,  # surface as 502 Bad Gateway — upstream fault
+            response_body=r.text[:500],
+        )
+
+
 async def gh_get(repo: str, path: str, headers: dict = None) -> Optional[dict]:
     """
     Fetch a single file's metadata + base64 content from GitHub.
 
     Returns None if the file doesn't exist (404).
-    Returns the raw GitHub API response dict on success (structure is GitHub's
-    Contents API format — callers should not depend on undocumented keys).
-
-    Side effects: makes an HTTPS GET request to api.github.com.
+    Returns the raw GitHub API response dict on success.
 
     Raises:
-        httpx.HTTPStatusError: for any non-404 HTTP error (e.g. 401, 403, 500).
-        httpx.RequestError:    for network failures (timeout, DNS, connection refused).
+        GitHubRateLimitError: on 403 with exhausted rate limit.
+        GitHubAPIError:       for any other non-2xx response.
+        httpx.RequestError:   for network failures (timeout, DNS).
     """
     if headers is None:
         headers = WORKBENCH_HEADERS
 
     url = f"{GITHUB_API}/repos/{repo}/contents/{path}?ref={GITHUB_BRANCH}"
-    async with httpx.AsyncClient() as client:
-        r = await client.get(url, headers=headers)
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, headers=headers)
+    except httpx.RequestError as exc:
+        raise GitHubAPIError(f"Network error reaching GitHub: {exc}", status_code=503)
 
     if r.status_code == 404:
         return None
-    r.raise_for_status()
+    _raise_for_github_status(r)
     return r.json()
 
 
@@ -133,12 +156,15 @@ async def gh_list(repo: str, path: str, headers: dict = None) -> list:
         headers = WORKBENCH_HEADERS
 
     url = f"{GITHUB_API}/repos/{repo}/contents/{path}?ref={GITHUB_BRANCH}"
-    async with httpx.AsyncClient() as client:
-        r = await client.get(url, headers=headers)
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, headers=headers)
+    except httpx.RequestError as exc:
+        raise GitHubAPIError(f"Network error reaching GitHub: {exc}", status_code=503)
 
     if r.status_code == 404:
         return []
-    r.raise_for_status()
+    _raise_for_github_status(r)
     data = r.json()
     # The API returns a list for folders, a dict for files — always return a list
     return data if isinstance(data, list) else []
@@ -185,9 +211,13 @@ async def gh_put(
     if sha:
         payload["sha"] = sha
 
-    async with httpx.AsyncClient() as client:
-        r = await client.put(url, headers=headers, json=payload)
-    r.raise_for_status()
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.put(url, headers=headers, json=payload)
+    except httpx.RequestError as exc:
+        raise GitHubAPIError(f"Network error reaching GitHub: {exc}", status_code=503)
+
+    _raise_for_github_status(r)
     return r.json()
 
 
@@ -222,7 +252,11 @@ async def gh_put_bytes(
     if sha:
         payload["sha"] = sha
 
-    async with httpx.AsyncClient() as client:
-        r = await client.put(url, headers=headers, json=payload)
-    r.raise_for_status()
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.put(url, headers=headers, json=payload)
+    except httpx.RequestError as exc:
+        raise GitHubAPIError(f"Network error reaching GitHub: {exc}", status_code=503)
+
+    _raise_for_github_status(r)
     return r.json()

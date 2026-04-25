@@ -54,76 +54,38 @@ def create_jwt_token(user_id: str, expiry_minutes: int = 480) -> str:
     """
     Create a signed JWT token for an authenticated user.
 
-    This function is called after successful login to issue a session token.
-    The token contains the user_id and an expiration timestamp.
-
     PARAMETERS:
-    - user_id: Unique identifier for the authenticated user (e.g., "admin" or UUID)
-    - expiry_minutes: How long the token is valid (default: 480 = 8 hours)
-    
+    - user_id:        Unique identifier for the authenticated user
+    - expiry_minutes: Validity window in minutes (default 480 = 8 hours)
+
     RETURNS:
-    - str: The encoded JWT string (to be sent in Authorization: Bearer <token> header)
-    
-    TOKEN PAYLOAD STRUCTURE:
-    {
-        "user_id": "admin",           // Who is authenticated
-        "exp": 1714000000,           // Expiration timestamp (Unix epoch)
-        "iat": 1713996400            // Issued at timestamp (Unix epoch)
-    }
-    
-    SECURITY NOTE:
-    - The token is signed using HS256 algorithm with JWT_SECRET as the key
-    - Any modification to the payload invalidates the signature
-    - The token expires after expiry_minutes — client must re-authenticate
-    
-    TODO: Replace pass with actual implementation:
-    - Import jwt from PyJWT library
-    - Build payload dict with user_id, exp, iat
-    - Return jwt.encode(payload, config.JWT_SECRET, algorithm="HS256")
-    
-    CALLED BY: /api/auth/login endpoint after successful credential validation
-    
-    EXAMPLE:
-        # After validating username/password:
-        token = create_jwt_token("user_abc123", expiry_minutes=480)
-        # token is a string like "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-"""
-    # TODO: Implement JWT token creation
-    # payload = {
-    #     "user_id": user_id,
-    #     "exp": datetime.now(timezone.utc) + timedelta(minutes=expiry_minutes),
-    #     "iat": datetime.now(timezone.utc),
-    # }
-    # return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
-    pass
+    - str: Encoded JWT (send as Authorization: Bearer <token>)
+
+    CALLED BY: /api/auth/login after successful credential validation
+    """
+    # Delegate to auth.py which owns the canonical JWT implementation
+    from auth import create_token
+    return create_token(user_id, expires_minutes=expiry_minutes)
 
 
 def verify_jwt_token(token: str) -> dict:
     """
-    Verify a JWT token and return its payload.
-
-    This function is called by the authentication middleware to validate
-    incoming requests. If the token is invalid or expired, an exception
-    is raised.
+    Verify a JWT token and return its decoded payload.
 
     PARAMETERS:
-    - token: The JWT string from Authorization: Bearer <token> header
-    
+    - token: JWT string from Authorization: Bearer <token> header
+
     RETURNS:
-    - dict: The decoded payload containing user_id, exp, iat
-    
+    - dict: Decoded payload containing at least {"user_id": ..., "exp": ..., "iat": ...}
+
     RAISES:
-    - jwt.ExpiredSignatureError: Token has expired
-    - jwt.InvalidTokenError: Token is malformed or signature invalid
-    
-    TODO: Replace pass with actual implementation:
-    - Return jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-    
-    CALLED BY: AuthMiddleware.decode_token() during request processing
+    - HTTPException(401): if the token is expired or has an invalid signature
+
+    CALLED BY: AuthMiddleware below, and any router that validates Bearer tokens
     """
-    # TODO: Implement JWT token verification
-    # return jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
-    pass
+    # Delegate to auth.py which owns the canonical JWT implementation
+    from auth import verify_token
+    return verify_token(token)
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -168,37 +130,74 @@ def encrypt_token(plain_token: str, user_id: str) -> bytes:
     
     CALLED BY: /api/auth/token endpoint when user saves GitHub token
     """
-    # TODO: Implement token encryption
-    pass
+    import secrets as _secrets
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from config import JWT_SECRET
+
+    # Derive a unique 256-bit AES key for this user from the master secret.
+    # PBKDF2 turns the text JWT_SECRET into a proper cryptographic key.
+    # Using user_id as the salt means each user gets a different key even
+    # if two users have the same plain_token value.
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,           # 32 bytes = 256 bits for AES-256
+        salt=user_id.encode(),
+        iterations=100_000,  # NIST minimum for PBKDF2-SHA256
+    )
+    master_key = kdf.derive(JWT_SECRET.encode())
+
+    # Random 96-bit IV — must be unique per encryption but not secret
+    iv = _secrets.token_bytes(12)
+
+    ciphertext = AESGCM(master_key).encrypt(iv, plain_token.encode(), None)
+
+    # Prepend IV so decrypt_token can recover it without separate storage
+    return iv + ciphertext
 
 
 def decrypt_token(encrypted: bytes, user_id: str) -> str:
     """
     Decrypt a stored GitHub token back to plain text.
 
-    This function is called before every GitHub API request to decrypt
-    the user's stored token.
-
     PARAMETERS:
-    - encrypted: The stored ciphertext (IV + ciphertext + tag)
-    - user_id: The user's ID — used to derive the same encryption key
-    
+    - encrypted: IV + ciphertext bytes as returned by encrypt_token()
+    - user_id:   The user's ID — used to re-derive the same per-user key
+
     RETURNS:
     - str: The decrypted plain-text GitHub token
-    
+
     RAISES:
-    - Exception: If decryption fails (corrupted ciphertext, wrong JWT_SECRET)
-    
-    TODO: Replace pass with actual implementation:
-    - Derive master key using same method as encrypt_token()
-    - Split encrypted into iv and ciphertext
-    - Decrypt using AESGCM(master_key).decrypt(iv, ciphertext, None)
-    - Return plaintext.decode()
-    
-    CALLED BY: github.py helpers before making API requests
+    - cryptography.exceptions.InvalidTag: if the ciphertext was tampered with
+                                          or the wrong JWT_SECRET is in use
     """
-    # TODO: Implement token decryption
-    pass
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from config import JWT_SECRET
+
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=user_id.encode(),
+        iterations=100_000,
+    )
+    master_key = kdf.derive(JWT_SECRET.encode())
+
+    # IV is the first 12 bytes; the rest is ciphertext + GCM authentication tag
+    iv         = encrypted[:12]
+    ciphertext = encrypted[12:]
+
+    try:
+        plaintext = AESGCM(master_key).decrypt(iv, ciphertext, None)
+    except Exception as exc:
+        from exceptions import TokenDecryptionError
+        raise TokenDecryptionError(
+            "GitHub token decryption failed — the ciphertext may be corrupted "
+            "or JWT_SECRET has changed since the token was stored."
+        ) from exc
+    return plaintext.decode()
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -207,76 +206,87 @@ def decrypt_token(encrypted: bytes, user_id: str) -> str:
 
 class AuthMiddleware:
     """
-    FastAPI middleware that validates JWT tokens on every request.
+    Starlette/FastAPI middleware that validates JWT Bearer tokens on every request.
 
-    This middleware is added to the FastAPI app in main.py. It intercepts
-    every incoming request, extracts the JWT from the Authorization header,
-    and verifies it. If valid, it adds the user_id to the request.state
-    so route handlers can access it.
+    PUBLIC ROUTES (bypassed — no token required):
+    - /api/health
+    - /api/auth/login
+    - /static/*
 
-    HOW IT WORKS:
-    1. Request arrives with "Authorization: Bearer <jwt_token>" header
-    2. Middleware extracts the token
-    3. Middleware calls verify_jwt_token() to decode and validate
-    4. If valid, request.state.user_id = payload["user_id"]
-    5. If invalid or missing, return 401 Unauthorized
-    
-    PUBLIC ROUTES (no auth required):
-    - /api/health — Health check for Docker monitoring
-    - /api/auth/login — Login endpoint (returns JWT)
-    - /static/* — Static frontend files (HTML, CSS, JS)
-    
-    ALL OTHER ROUTES require valid JWT authentication.
+    All other routes must supply a valid Authorization: Bearer <token> header.
+    On success, request.state.user_id is set for downstream route handlers.
+    """
 
-    TODO: Implement the dispatch method:
-    async def dispatch(self, request: Request, call_next):
-        # Skip auth for public routes
-        if request.url.path in ["/api/health", "/api/auth/login", "/static"]:
-            return await call_next(request)
-        
-        # Extract token from Authorization header
-        auth_header = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
-            return JSONResponse(status_code=401, content={"detail": "Missing token"})
-        
-        token = auth_header[7:]  # Remove "Bearer " prefix
-        
-        # Verify token
+    # Routes that don't require authentication
+    _PUBLIC_PREFIXES = ("/api/health", "/api/auth/login", "/static")
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        # Only intercept HTTP requests — pass websockets and lifespan events through
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        from starlette.requests import Request
+        from starlette.responses import JSONResponse
+
+        request = Request(scope, receive, send)
+        path = request.url.path
+
+        # Allow public routes through without a token
+        if any(path.startswith(prefix) for prefix in self._PUBLIC_PREFIXES):
+            await self.app(scope, receive, send)
+            return
+
+        # Extract the Bearer token from the Authorization header
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            response = JSONResponse(
+                status_code=401,
+                content={"detail": "Authorization header missing or not Bearer"}
+            )
+            await response(scope, receive, send)
+            return
+
+        token = auth_header[len("Bearer "):]
+
         try:
             payload = verify_jwt_token(token)
+            # Attach user_id to request state for route handlers
             request.state.user_id = payload["user_id"]
-        except jwt.ExpiredSignatureError:
-            return JSONResponse(status_code=401, content={"detail": "Token expired"})
-        except jwt.InvalidTokenError:
-            return JSONResponse(status_code=401, content={"detail": "Invalid token"})
-        
-        # Continue to route handler
-        response = await call_next(request)
-        return response
-    
-    DEPENDENCY FUNCTION (for FastAPI Depends()):
-    def require_auth(credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer())) -> str:
-        '''
-        FastAPI dependency that returns user_id from valid JWT.
-        
-        Usage in routes:
+        except Exception:
+            # verify_jwt_token already raises HTTPException(401) for bad tokens;
+            # catch anything else too so we never return a raw 500 from middleware
+            response = JSONResponse(
+                status_code=401,
+                content={"detail": "Invalid or expired token"}
+            )
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+
+def require_auth(
+    credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
+) -> str:
+    """
+    FastAPI dependency that extracts and validates a Bearer JWT, returning user_id.
+
+    Usage in route handlers:
         @router.get("/api/papers")
         async def list_papers(user_id: str = Depends(require_auth)):
-            # user_id is extracted from JWT
             ...
-        '''
-        if not credentials:
-            raise HTTPException(status_code=401, detail="Authentication required")
-        
-        try:
-            payload = verify_jwt_token(credentials.scheme + " " + credentials.credentials)
-            return payload["user_id"]
-        except jwt.ExpiredSignatureError:
-            raise HTTPException(status_code=401, detail="Token expired")
-        except jwt.InvalidTokenError:
-            raise HTTPException(status_code=401, detail="Invalid token")
+
+    RAISES:
+    - HTTPException(401): if credentials are missing or the token is invalid/expired
     """
-    pass
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    payload = verify_jwt_token(credentials.credentials)
+    return payload["user_id"]
 
 
 # ──────────────────────────────────────────────────────────────────

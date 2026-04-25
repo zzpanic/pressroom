@@ -5,15 +5,17 @@ httpx==0.27.2
 python-multipart==0.0.9
 pyyaml==6.0.2
 
-# ──────────────────────────────────────────────────────────────────
-# FUTURE DEPENDENCIES — uncomment as features are implemented
-# ──────────────────────────────────────────────────────────────────
-
 # JWT authentication (for create_token / verify_token in auth.py)
-# PyJWT>=2.8.0
+PyJWT>=2.8.0
 
 # Password hashing (for hash_password / verify_password in auth.py)
-# bcrypt>=4.1.0
+bcrypt>=4.1.0
+
+# Rate limiting on the publish endpoint (routers/publish.py)
+slowapi>=0.1.9
+
+# AES-256-GCM token encryption (auth_store.py encrypt_token / decrypt_token)
+cryptography>=42.0.0
 
 # Async test framework (for tests/test_auth.py, tests/conftest.py)
 # pytest-asyncio>=0.23.0

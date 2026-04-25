@@ -42,6 +42,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from exceptions import PDFGenerationError
+
 
 class PandocEngine:
     """
@@ -63,43 +65,74 @@ class PandocEngine:
         template: str,
     ) -> Path:
         """
-        Generate PDF using Pandoc + XeLaTeX.
+        Generate a PDF using Pandoc with the XeLaTeX backend.
 
         PARAMETERS:
-        - slug: Paper identifier (e.g., "my-great-idea")
-          Used to create isolated temp directory /tmp/pressroom/{slug}/
-        - body: Markdown content AFTER frontmatter
-          This is the actual paper text to be rendered
-        - frontmatter: Dict of YAML metadata fields
-          Contains title, author, gate, version, etc.
-        - template: Full text of the LaTeX template file
+        - slug:        Paper identifier — used to name the isolated temp directory
+        - body:        Markdown text after the frontmatter block
+        - frontmatter: Parsed YAML metadata (title, author, gate, version, …)
+        - template:    Full content of the LaTeX template file
 
         RETURNS:
-        - Path to generated PDF file on local filesystem
+        - Path: absolute path to the generated PDF (/tmp/pressroom/{slug}/output.pdf)
 
-        SIDE EFFECTS:
-        - Creates temp directory /tmp/pressroom/{slug}/
-        - Writes markdown content to input.md
-        - Writes template to template.latex
-        - Runs pandoc CLI to generate PDF
-        - Cleans up temp files after generation
+        RAISES:
+        - RuntimeError: if pandoc exits with a non-zero return code (stderr included)
 
-        COMMAND LINE EXAMPLE:
-            pandoc --pdf-engine=xelatex \\
-                -t latex \\
-                template.latex \\
-                input.md \\
+        COMMAND EXECUTED:
+            pandoc input.md
+                --pdf-engine=xelatex
+                --template=template.latex
                 -o output.pdf
-
-        TODO: Implement:
-        1. Create temp dir /tmp/pressroom/{slug}/
-        2. Write frontmatter + body to input.md
-        3. Write template to template.latex
-        4. Run subprocess with pandoc CLI arguments
-        5. Return Path to output.pdf
-
-        ERROR HANDLING:
-        - If pandoc subprocess returns non-zero exit code, raise PDFGenerationError
-        - Capture stderr for error message
         """
-        pass
+        import asyncio
+        import yaml
+
+        # ── 1. Prepare isolated temp directory ───────────────────────────────
+        work_dir = Path(tempfile.gettempdir()) / "pressroom" / slug
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        input_md   = work_dir / "input.md"
+        tmpl_latex = work_dir / "template.latex"
+        output_pdf = work_dir / "output.pdf"
+
+        # ── 2. Write input markdown (YAML frontmatter block + body) ──────────
+        # Pandoc reads YAML front matter when it appears between --- fences at
+        # the top of the file, which makes title/author available to the template
+        # via $title$, $author$, etc.
+        fm_yaml = yaml.dump(frontmatter, allow_unicode=True, default_flow_style=False)
+        input_md.write_text(f"---\n{fm_yaml}---\n\n{body}", encoding="utf-8")
+
+        # ── 3. Write LaTeX template ───────────────────────────────────────────
+        tmpl_latex.write_text(template, encoding="utf-8")
+
+        # ── 4. Run pandoc ─────────────────────────────────────────────────────
+        # Run in an executor so we don't block the event loop during the
+        # (potentially slow) XeLaTeX compilation.
+        cmd = [
+            "pandoc",
+            str(input_md),
+            "--pdf-engine=xelatex",
+            f"--template={tmpl_latex}",
+            "-o", str(output_pdf),
+        ]
+
+        loop = asyncio.get_event_loop()
+        proc = await loop.run_in_executor(
+            None,
+            lambda: subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=str(work_dir),
+            ),
+        )
+
+        if proc.returncode != 0:
+            raise PDFGenerationError(
+                f"pandoc failed for '{slug}':\n{proc.stderr}",
+                engine="pandoc",
+                exit_code=proc.returncode,
+            )
+
+        return output_pdf

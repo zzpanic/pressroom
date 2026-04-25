@@ -127,25 +127,43 @@ class JsonFormatter(logging.Formatter):
 
 class RequestIDMiddleware:
     """
-    Middleware that adds a unique request_id to every log entry in an HTTP request.
+    ASGI middleware that stamps every HTTP request with a UUID trace ID.
 
-    HOW IT WORKS:
-    1. On every incoming request, generate a UUID
-    2. Store the ID in request.state (Starlette/FastAPI request object)
-    3. When logging, attach the request_id to the LogRecord
-    4. Return the request_id in response headers for client debugging
+    On each request:
+    - Generates a UUID and stores it in request.state.request_id
+    - Returns it in the X-Request-ID response header so clients can correlate logs
+    - Does NOT attach the ID to log records automatically — routers that want to
+      include it should pass extra={"request_id": request.state.request_id} to
+      their logger calls.
 
     SPEC REFERENCE: §13.3 "Request ID Tracing"
-
-    TODO: Implement the dispatch method in main.py middleware registration:
-        async def dispatch(self, request, call_next):
-            request_id = str(uuid.uuid4())
-            request.state.request_id = request_id
-            response = await call_next(request)
-            response.headers["X-Request-ID"] = request_id
-            return response
     """
-    pass
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        from starlette.requests import Request
+        from starlette.datastructures import MutableHeaders
+
+        request_id = str(uuid.uuid4())
+        scope["state"] = scope.get("state", {})
+
+        request = Request(scope, receive, send)
+        request.state.request_id = request_id
+
+        # Intercept the response to inject the header
+        async def send_with_header(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers.append("X-Request-ID", request_id)
+            await send(message)
+
+        await self.app(scope, receive, send_with_header)
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -201,25 +219,38 @@ def get_logger(name: str = __name__) -> logging.Logger:
 
 def log_request(request: Any, duration_ms: float = 0) -> None:
     """
-    Log an HTTP request with timing information.
+    Log a completed HTTP request with method, path, and timing.
 
-    TODO: Implement using get_logger("pressroom.middleware")
-    
-    def log_request(request, duration_ms):
-        logger = get_logger("pressroom.middleware")
-        logger.info(f"{request.method} {request.url.path}")
+    PARAMETERS:
+    - request:     A Starlette/FastAPI Request object
+    - duration_ms: How long the request took to process (milliseconds)
     """
-    pass
+    logger = get_logger("pressroom.middleware")
+    extra: dict = {"duration_ms": duration_ms}
+
+    # Include trace ID if the middleware attached one
+    request_id = getattr(getattr(request, "state", None), "request_id", None)
+    if request_id:
+        extra["request_id"] = request_id
+
+    logger.info(f"{request.method} {request.url.path}", extra=extra)
 
 
 def log_error(exception: Exception, request: Any = None) -> None:
     """
-    Log an error with full exception context.
+    Log an exception with full traceback context.
 
-    TODO: Implement using get_logger("pressroom.exceptions")
-    
-    def log_error(exception, request=None):
-        logger = get_logger("pressroom.exceptions")
-        logger.error(str(exception), exc_info=exception)
+    PARAMETERS:
+    - exception: The exception to log
+    - request:   Optional Starlette/FastAPI Request for context (method, path, trace ID)
     """
-    pass
+    logger = get_logger("pressroom.exceptions")
+    extra: dict = {}
+
+    if request is not None:
+        extra["path"] = str(request.url.path)
+        request_id = getattr(getattr(request, "state", None), "request_id", None)
+        if request_id:
+            extra["request_id"] = request_id
+
+    logger.error(str(exception), exc_info=exception, extra=extra)

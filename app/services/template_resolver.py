@@ -58,76 +58,161 @@ TODO: Implement the TemplateInfo dataclass and resolve_template function:
         pass
 """
 
+from pathlib import Path
 from typing import Optional
+
+from exceptions import TemplateNotFoundError
+
+# Extension used by each engine format
+_FORMAT_EXT = {"latex": ".latex", "sile": ".lufi"}
+
+# Where user-uploaded templates live inside the workbench repo
+_WORKBENCH_TEMPLATE_DIR = "zz-pressroom/templates"
+
+# Local fallback directory inside the container (bundled with the app image).
+# Spec §8.3 says bundled templates live in app/static/templates/.
+_LOCAL_TEMPLATE_DIR = Path("/app/static/templates")
 
 
 class TemplateResolver:
     """
-    Stub for template resolution logic.
+    Resolves LaTeX/Sile templates for PDF generation.
 
-    TODO: Implement the full TemplateResolver class (see module docstring for design)
+    Search order for resolve_template():
+    1. User's workbench repo — zz-pressroom/templates/{name}.{ext}
+    2. Local container templates — /app/templates/{name}.{ext}
 
-    INTEGRATION POINTS:
-    - Called by services/pdf/pandoc_engine.py before generating PDF
-    - Called by services/pdf/sile_engine.py before generating PDF
-    - Called by routers/templates.py for template listing/upload endpoints
+    This lets users override bundled templates by committing their own to
+    their workbench repo without changing the app image.
     """
 
-    async def resolve_template(self, template_name: str, user_id: Optional[str] = None) -> Optional[dict]:
+    async def resolve_template(
+        self, template_name: str, user_id: Optional[str] = None
+    ) -> dict:
         """
-        Resolve a template by name and return its metadata + content.
+        Find a template by name and return its content and metadata.
 
         PARAMETERS:
-        - template_name: User-selected template name (e.g., "whitepaper")
-        - user_id: Authenticated user ID (for multi-user mode)
+        - template_name: Template name without extension (e.g. "whitepaper")
+        - user_id:       Ignored in single-user mode; reserved for multi-user
 
         RETURNS:
-        - dict with keys: name, format, content, source, path
-        
-        TODO: Implement search order:
-        1. Check user workbench templates directory
-        2. Fall back to local templates directory
-        3. Raise TemplateNotFoundError if not found in either
+        - dict with keys:
+            name    (str) — template_name
+            format  (str) — "latex" or "sile"
+            content (str) — full file text
+            source  (str) — "workbench" or "local"
 
-        USAGE IN PDF ENGINE:
-            template = await template_resolver.resolve_template("whitepaper", user_id)
-            pdf_path = await PandocEngine.generate(
-                slug="my-paper",
-                body=markdown_body,
-                frontmatter=frontmatter,
-                template=template["content"]
-            )
+        RAISES:
+        - FileNotFoundError: if the template is not found in either location
         """
-        pass
+        from github import gh_get_text, WORKBENCH_HEADERS
+        from config import IDEAS_WORKBENCH_REPO
+
+        # Try each format in preference order (latex before sile)
+        for fmt, ext in _FORMAT_EXT.items():
+            # 1. Workbench repo
+            repo_path = f"{_WORKBENCH_TEMPLATE_DIR}/{template_name}{ext}"
+            content = await gh_get_text(
+                IDEAS_WORKBENCH_REPO, repo_path, headers=WORKBENCH_HEADERS
+            )
+            if content is not None:
+                return {"name": template_name, "format": fmt, "content": content, "source": "workbench"}
+
+            # 2. Local container fallback
+            local_path = _LOCAL_TEMPLATE_DIR / f"{template_name}{ext}"
+            if local_path.exists():
+                return {
+                    "name": template_name,
+                    "format": fmt,
+                    "content": local_path.read_text(encoding="utf-8"),
+                    "source": "local",
+                }
+
+        raise TemplateNotFoundError(template_name)
 
     async def list_templates(self, user_id: Optional[str] = None) -> list:
         """
-        List all available templates.
+        Return all available templates from both workbench and local sources.
 
         RETURNS:
-        - list of dicts: [{name, format, preview, source}, ...]
-        
-        TODO: Implement:
-        1. Scan local templates/ directory for .latex, .lufi files
-        2. If multi-user mode, also scan user workbench zz-pressroom/templates/
-        3. Return combined list with source indicator
+        - list of dicts: [{name, format, source}, ...]
+          Workbench templates appear before local ones.
+          Duplicates (same name in both) are deduplicated, keeping workbench entry.
         """
-        pass
+        from github import gh_list, WORKBENCH_HEADERS
+        from config import IDEAS_WORKBENCH_REPO
 
-    async def upload_template(self, name: str, content: str, fmt: str, user_id: str) -> None:
+        seen: set[str] = set()
+        results: list[dict] = []
+
+        # Workbench templates
+        try:
+            items = await gh_list(
+                IDEAS_WORKBENCH_REPO, _WORKBENCH_TEMPLATE_DIR, headers=WORKBENCH_HEADERS
+            )
+            for item in items:
+                fname = item.get("name", "")
+                for fmt, ext in _FORMAT_EXT.items():
+                    if fname.endswith(ext):
+                        name = fname[: -len(ext)]
+                        seen.add(name)
+                        results.append({"name": name, "format": fmt, "source": "workbench"})
+        except Exception:
+            # Workbench unavailable — fall through to local only
+            pass
+
+        # Local container templates
+        if _LOCAL_TEMPLATE_DIR.exists():
+            for path in sorted(_LOCAL_TEMPLATE_DIR.iterdir()):
+                for fmt, ext in _FORMAT_EXT.items():
+                    if path.name.endswith(ext):
+                        name = path.name[: -len(ext)]
+                        if name not in seen:
+                            seen.add(name)
+                            results.append({"name": name, "format": fmt, "source": "local"})
+
+        return results
+
+    async def upload_template(
+        self, name: str, content: str, fmt: str, user_id: str
+    ) -> None:
         """
-        Upload a new template to the user's workbench.
+        Upload a template to the user's workbench repo.
 
         PARAMETERS:
-        - name: Template name (without extension)
-        - content: Full template file content
-        - fmt: Template format ("latex" or "sile")
-        - user_id: Authenticated user ID
+        - name:    Template name without extension (e.g. "my-journal")
+        - content: Full template file text
+        - fmt:     "latex" or "sile"
+        - user_id: Authenticated user ID (unused in single-user mode)
 
-        TODO: Implement:
-        1. Validate format (must be "latex" or "sile")
-        2. Determine extension (.latex or .lufi)
-        3. Save to user workbench zz-pressroom/templates/ directory
-        4. Commit and push to GitHub repository (via github.py API)
+        RAISES:
+        - ValueError: if fmt is not "latex" or "sile"
+        - RuntimeError: if the GitHub write fails
         """
-        pass
+        from github import gh_get, gh_put, WORKBENCH_HEADERS
+        from config import IDEAS_WORKBENCH_REPO
+
+        if fmt not in _FORMAT_EXT:
+            raise ValueError(
+                f"Invalid template format '{fmt}'. Must be one of: {', '.join(_FORMAT_EXT)}"
+            )
+
+        ext = _FORMAT_EXT[fmt]
+        repo_path = f"{_WORKBENCH_TEMPLATE_DIR}/{name}{ext}"
+
+        # Fetch existing SHA so GitHub accepts the update without a conflict
+        existing = await gh_get(IDEAS_WORKBENCH_REPO, repo_path, headers=WORKBENCH_HEADERS)
+        sha = existing["sha"] if existing else None
+
+        try:
+            await gh_put(
+                IDEAS_WORKBENCH_REPO,
+                repo_path,
+                content,
+                message=f"pressroom: upload template {name}{ext}",
+                sha=sha,
+                headers=WORKBENCH_HEADERS,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"Failed to upload template '{name}': {exc}") from exc

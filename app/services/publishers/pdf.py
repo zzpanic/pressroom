@@ -56,36 +56,44 @@ class PdfPublisher:
         metadata: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        Save PDF to local pressroom-pubs directory.
+        Save a generated PDF into the local pressroom-pubs directory structure.
 
         PARAMETERS:
-        - pdf_path: Path to the generated PDF file
-        - metadata: Dict with paper metadata (slug, version, gate, author, etc.)
+        - pdf_path: Path to the generated PDF file (must already exist)
+        - metadata: Dict with paper metadata — required keys:
+            - slug (str):    URL-friendly paper identifier
+            - version (str): Version string e.g. "v0.1-alpha"
+            - user_id (str): Authenticated user's ID
 
         RETURNS:
-        - dict with keys: saved_to (absolute path where PDF was saved)
+        - dict: {"saved_to": "<absolute path of the copied PDF>"}
 
         SIDE EFFECTS:
-        - Creates directory /app/data/pubs/{user_id}/{slug}/{version}/ if needed
-        - Copies PDF to {pubs_dir}/{slug}/{version}/output.pdf
-        - Returns absolute path for reference by mirror step
+        - Creates /app/data/pubs/{user_id}/{slug}/{version}/ if it doesn't exist
+        - Copies the PDF to that directory as {slug}.pdf
 
-        SNAPSHOT PATH PATTERN (from SPEC §6):
-            /app/data/pubs/{user_id}/{slug}/{version}/output.pdf
-        
-        EXAMPLE:
-            /app/data/pubs/user_abc123/my-great-idea/v0.1-alpha/output.pdf
+        SNAPSHOT PATH (SPEC §6):
+            /app/data/pubs/{user_id}/{slug}/{version}/{slug}.pdf
 
-        TODO: Implement:
-        1. Extract slug and version from metadata
-        2. Create pubs directory: Path("/app/data/pubs")
-        3. Create user subdirectory: /app/data/pubs/{user_id} (from auth)
-        4. Create paper subdirectory: /{slug}/{version}/
-        5. Copy PDF to output.pdf
-        6. Return {"saved_to": str(abs_path)}
-
-        ERROR HANDLING:
-        - If PDF file doesn't exist, raise FileNotFoundError
-        - If directory creation fails, raise PermissionError
+        RAISES:
+        - FileNotFoundError: if pdf_path does not exist
+        - KeyError: if required metadata keys are missing
         """
-        pass
+        import shutil
+
+        if not pdf_path.exists():
+            raise FileNotFoundError(f"PDF not found at {pdf_path}")
+
+        # Extract required metadata
+        slug     = metadata["slug"]
+        version  = metadata["version"]
+        user_id  = metadata["user_id"]
+
+        # Build destination directory and copy
+        dest_dir = Path("/app/data/pubs") / user_id / slug / version
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        dest_path = dest_dir / f"{slug}.pdf"
+        shutil.copy2(pdf_path, dest_path)
+
+        return {"saved_to": str(dest_path)}

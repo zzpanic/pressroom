@@ -86,19 +86,28 @@ class Publisher(ABC):
 
 def get_publisher(publisher_type: str) -> Publisher:
     """
-    Factory function to select the correct publisher at runtime.
+    Factory function — return the correct Publisher instance for a given type.
 
-    TODO: Implement based on publisher_type:
-        if publisher_type == "pdf":
-            from services.publishers.pdf import PdfPublisher
-            return PdfPublisher()
-        elif publisher_type == "blog":
-            from services.publishers.blog import BlogPublisher
-            return BlogPublisher()
-        elif publisher_type == "docx":
-            from services.publishers.docx import DocxPublisher
-            return DocxPublisher()
-        else:
-            raise ValueError(f"Unknown publisher type: {publisher_type}")
+    PARAMETERS:
+    - publisher_type: One of "pdf", "blog", "docx"
+
+    RETURNS:
+    - Publisher: A concrete Publisher instance ready to call .publish() on
+
+    RAISES:
+    - ValueError: if publisher_type is not recognised
     """
-    pass
+    if publisher_type == "pdf":
+        from services.publishers.pdf import PdfPublisher
+        return PdfPublisher()
+    elif publisher_type == "blog":
+        from services.publishers.blog import BlogPublisher
+        return BlogPublisher()
+    elif publisher_type == "docx":
+        from services.publishers.docx import DocxPublisher
+        return DocxPublisher()
+    else:
+        raise ValueError(
+            f"Unknown publisher type '{publisher_type}'. "
+            "Valid types are: pdf, blog, docx"
+        )

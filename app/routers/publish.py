@@ -18,8 +18,11 @@
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from auth import check_auth
+from models import PublishRequest
 
 _VALID_GATES    = {"alpha", "exploratory", "draft", "review", "published"}
 _VERSION_RE     = re.compile(r"^v\d+\.\d+(-[a-z]+)?$")  # e.g. v0.1-exploratory or v1.0
@@ -30,34 +33,30 @@ from services.snapshot import create_snapshot, mirror_to_pubs
 
 router = APIRouter()
 
+# Rate limiter: keyed by client IP address so each caller gets their own bucket.
+# The limit is intentionally low — publish is an expensive operation (PDF generation
+# + two GitHub API writes) and should never be called in a tight loop.
+_limiter = Limiter(key_func=get_remote_address)
+
 
 @router.post("/api/papers/{slug}/publish")
-async def publish_paper(slug: str, request: Request, user_id: str = Depends(check_auth)):
+@_limiter.limit("5/minute")
+async def publish_paper(slug: str, request: Request, body: PublishRequest, user_id: str = Depends(check_auth)):
     """
     Create a versioned snapshot in ideas-workbench and mirror it to pressroom-pubs.
 
-    The request body must include:
-      { "version": "v0.1-exploratory" }
+    The request body is validated by PublishRequest (Pydantic):
+      { "version": "v0.1-exploratory", "gate": "exploratory" }
 
     Before creating the snapshot, this endpoint checks that:
-      - A version string was provided
       - The review PDF exists in GitHub (i.e. "Preview PDF" was run first)
 
-    If both checks pass, it calls create_snapshot() then mirror_to_pubs()
-    from services/snapshot.py.
-
     Returns {"ok": true, "message": "..."} on success.
-    Raises HTTP 400 if version is missing.
     Raises HTTP 409 if the review PDF doesn't exist in GitHub yet.
     Raises HTTP 500 if the snapshot or mirror operation fails.
     """
-    req_body = await request.json()
-    if not isinstance(req_body, dict):
-        raise HTTPException(400, "Request body must be a JSON object.")
-    version  = req_body.get("version")
+    version = body.version
 
-    if not version:
-        raise HTTPException(400, "version is required")
     if not _VERSION_RE.match(version):
         raise HTTPException(400, f"Invalid version format '{version}'. Expected e.g. v0.1-exploratory or v1.0.")
 

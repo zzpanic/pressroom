@@ -93,19 +93,26 @@ class PDFEngine(ABC):
 
 def get_pdf_engine() -> PDFEngine:
     """
-    Factory function to select the correct PDF engine at runtime.
+    Factory function — return the correct PDFEngine based on config.PDF_ENGINE.
 
-    TODO: Implement based on config.PDF_ENGINE setting:
-        from config import PDF_ENGINE
+    Defaults to PandocEngine when PDF_ENGINE is unset or set to anything other
+    than "sile", so new deployments work out of the box.
 
-        if PDF_ENGINE == "sile":
-            from services.pdf.sile_engine import SileEngine
-            return SileEngine()
-        else:  # Default to pandoc
-            from services.pdf.pandoc_engine import PandocEngine
-            return PandocEngine()
+    RAISES:
+    - ValueError: if PDF_ENGINE is set to an unrecognised value
     """
-    pass
+    from config import PDF_ENGINE
+
+    if PDF_ENGINE == "sile":
+        from services.pdf.sile_engine import SileEngine
+        return SileEngine()
+    elif PDF_ENGINE in ("pandoc", ""):
+        from services.pdf.pandoc_engine import PandocEngine
+        return PandocEngine()
+    else:
+        raise ValueError(
+            f"Unknown PDF_ENGINE '{PDF_ENGINE}'. Valid values are: pandoc, sile"
+        )
 
 
 async def generate_pdf(slug: str, body: str, frontmatter: dict, template: str) -> Path:
@@ -130,8 +137,4 @@ async def generate_pdf(slug: str, body: str, frontmatter: dict, template: str) -
     TODO: This will work automatically once get_pdf_engine() is implemented.
     """
     engine = get_pdf_engine()
-    if engine is None:
-        raise RuntimeError(
-            "PDF engine not yet configured. Implement get_pdf_engine() in services/pdf/base.py."
-        )
     return await engine.generate(slug, body, frontmatter, template)

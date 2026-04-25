@@ -1,26 +1,62 @@
 """
-pdf.py — DEPRECATED: PDF generation services have moved to the pdf/ subpackage.
+services/pdf.py — Main entry point for PDF generation services.
 
-This file is a deprecation shim that redirects imports to the new location.
-All PDF-related code has been moved to:
-- services/pdf/base.py — PDFEngine protocol
-- services/pdf/pandoc_engine.py — Pandoc engine implementation
-- services/pdf/sile_engine.py — Sile engine implementation
-- services/pdf/factory.py — Factory function for engine selection
+This file provides the main interface to PDF generation functionality.
+It acts as a thin wrapper that coordinates between:
+1. The PDF engine factory (determines which engine to use)
+2. The actual PDF engines (Pandoc, Sile, etc.)
+3. The frontmatter processing
 
-TODO: Remove this file once all imports have been migrated.
+The generate_pdf() function is the main entry point for all PDF generation.
+
+SPEC REFERENCE: §7.4 "Publish Workflow" — PDF Generation
 """
 
-import warnings
+import tempfile
+import os
+import logging
+from pathlib import Path
 
-# Redirect users to the new location
-warnings.warn(
-    "app.services.pdf is deprecated. Import from app.services.pdf.base instead.",
-    DeprecationWarning,
-    stacklevel=2,
-)
+from .pdf.base import PDFEngine, get_pdf_engine
 
-# Re-export for backward compatibility (deprecated)
-from .pdf.base import PDFEngine, get_pdf_engine, generate_pdf
 
-__all__ = ["PDFEngine", "get_pdf_engine", "generate_pdf"]
+async def generate_pdf(slug: str, body: str, frontmatter: dict, template_content: str) -> Path:
+    """
+    Generate a PDF from markdown content using the configured PDF engine.
+    
+    PARAMETERS:
+    - slug: Paper identifier (used for temporary file paths)
+    - body: Markdown body content
+    - frontmatter: Frontmatter fields dict
+    - template_content: Raw LaTeX template content
+    
+    RETURNS:
+    - Path: Path to the generated PDF file
+    
+    SIDE EFFECTS:
+    - Creates temporary files in /tmp/pressroom/{slug}/ directory
+    - Generates a PDF file that can be served or stored
+    
+    SPEC REFERENCE: §7.4 "Publish Workflow" step 3 — Generate PDF
+    
+    EXAMPLE:
+        >>> output_path = await generate_pdf("my-paper", body, frontmatter, template_content)
+        >>> print(output_path)  # Path to the generated PDF
+    """
+    # Create temporary directory for this paper's PDF operations
+    temp_dir = Path(tempfile.gettempdir()) / "pressroom" / slug
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Get the configured PDF engine (defaults to Pandoc if not specified)
+    engine = get_pdf_engine()
+    
+    # Generate the PDF using the selected engine
+    pdf_path = temp_dir / f"{slug}.pdf"
+    
+    try:
+        # Call the engine's generate method with appropriate parameters
+        result = await engine.generate(slug, body, frontmatter, template_content)
+        return result
+    except Exception as e:
+        logging.error(f"PDF generation failed for slug {slug}: {str(e)}")
+        raise RuntimeError(f"PDF generation failed: {str(e)}")

@@ -40,6 +40,9 @@ from config import APP_USER, APP_PASSWORD
 # JWT library — add to requirements.txt when implementing:
 #   PyJWT>=2.8.0
 # For now, stub the JWT functions
+import jwt
+from config import JWT_SECRET
+
 
 security = HTTPBasic()
 
@@ -69,8 +72,8 @@ def check_auth(credentials: HTTPBasicCredentials = Depends(security)) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────
-# JWT TOKEN FUNCTIONS (STUBS — to be implemented)
-# ──────────────────────────────────────────────────────────────────
+# JWT TOKEN FUNCTIONS (IMPLEMENTED)
+# ──────────────────────────────────────────────────────────────────────────
 
 def create_token(user_id: str, expires_minutes: int = 60) -> str:
     """
@@ -83,41 +86,41 @@ def create_token(user_id: str, expires_minutes: int = 60) -> str:
     RETURNS:
     - str: Encoded JWT token string
     
-    TODO: Implement:
-    1. Import jwt (PyJWT library)
-    2. Create payload: {"user_id": user_id, "exp": datetime.utcnow() + timedelta(minutes=expires_minutes)}
-    3. Encode with config.JWT_SECRET
-    4. Return token string
-    
     USAGE IN ROUTERS:
         # After successful login
         token = create_token(user_id)
         return {"access_token": token, "token_type": "bearer"}
     """
-    # TODO: Implement when PyJWT is added to requirements.txt
-    pass
+    payload = {
+        "user_id": user_id,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=expires_minutes),
+        "iat": datetime.now(timezone.utc),
+    }
+    
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
 
 def verify_token(token: str) -> dict:
     """
     Verify and decode a JWT token.
-    
+
     PARAMETERS:
     - token: JWT token string to verify
-    
+
     RETURNS:
     - dict: Decoded payload with user_id and expiration info
-    
+
     RAISES:
-    - HTTPException(401) if token is invalid or expired
-    
-    TODO: Implement:
-    1. Import jwt (PyJWT library)
-    2. Decode with config.JWT_SECRET
-    3. Return decoded payload dict
+    - HTTPException(401): if the token is expired, has an invalid signature,
+                          or is otherwise malformed — never raises a raw jwt exception
     """
-    # TODO: Implement when PyJWT is added to requirements.txt
-    pass
+    try:
+        return jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired. Please log in again.")
+    except jwt.InvalidTokenError as exc:
+        # Covers InvalidSignatureError, DecodeError, and all other jwt subclasses
+        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
 
 
 def hash_password(password: str) -> str:
@@ -129,13 +132,9 @@ def hash_password(password: str) -> str:
     
     RETURNS:
     - str: Hashed password string
-    
-    TODO: Implement:
-    1. Import bcrypt library (add to requirements.txt)
-    2. Return bcrypt.hash_password(password.encode(), salt=bcrypt.gensalt()).decode()
     """
-    # TODO: Implement when bcrypt is added to requirements.txt
-    pass
+    import bcrypt
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -148,10 +147,6 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     
     RETURNS:
     - bool: True if password matches, False otherwise
-    
-    TODO: Implement:
-    1. Import bcrypt library (add to requirements.txt)
-    2. Return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
     """
-    # TODO: Implement when bcrypt is added to requirements.txt
-    pass
+    import bcrypt
+    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())

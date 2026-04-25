@@ -27,6 +27,7 @@ import re
 
 from auth import check_auth
 from config import IDEAS_WORKBENCH_REPO, PRESSROOM_REPO, TEMP_DIR
+from exceptions import PaperNotFoundError
 from github import gh_get, gh_get_text, gh_put_bytes
 from services.frontmatter import parse_frontmatter
 from services.pdf import generate_pdf
@@ -63,11 +64,7 @@ async def preview_pdf(slug: str, _: str = Depends(check_auth)):
     # Step 1 — fetch the paper markdown from GitHub
     md_text = await gh_get_text(IDEAS_WORKBENCH_REPO, md_path)
     if md_text is None:
-        raise HTTPException(
-            404,
-            f"Paper not found: {md_path}\n"
-            "Create the file in ideas-workbench before generating a preview."
-        )
+        raise PaperNotFoundError(slug)
 
     # Step 2 — split the markdown into frontmatter metadata and body text
     frontmatter, body = parse_frontmatter(md_text)

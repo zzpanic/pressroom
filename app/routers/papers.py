@@ -22,7 +22,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from auth import check_auth
 from config import IDEAS_WORKBENCH_REPO
+from exceptions import PaperNotFoundError
 from github import gh_get, gh_get_text, gh_put, gh_list
+from models import PaperSaveRequest
 from services.frontmatter import parse_frontmatter, write_frontmatter, apply_derived_fields
 
 router = APIRouter()
@@ -67,18 +69,15 @@ async def get_paper(slug: str, _: str = Depends(check_auth)):
     md_path = f"{slug}/publish/{slug}.md"
     md_text = await gh_get_text(IDEAS_WORKBENCH_REPO, md_path)
 
-    paper_exists = md_text is not None
+    if md_text is None:
+        raise PaperNotFoundError(slug)
 
-    if md_text:
-        # Parse the YAML frontmatter block out of the markdown file
-        frontmatter, _ = parse_frontmatter(md_text)
-    else:
-        frontmatter = {}
+    frontmatter, _ = parse_frontmatter(md_text)
 
     return {
-        "slug":         slug,
-        "frontmatter":  frontmatter,
-        "paper_exists": paper_exists,
+        "slug":        slug,
+        "frontmatter": frontmatter,
+        "paper_exists": True,
     }
 
 
@@ -101,11 +100,13 @@ async def get_versions(slug: str, _: str = Depends(check_auth)):
 
 
 @router.post("/api/papers/{slug}/save")
-async def save_paper(slug: str, request: Request, _: str = Depends(check_auth)):
+async def save_paper(slug: str, body: PaperSaveRequest, _: str = Depends(check_auth)):
     """
     Write updated frontmatter fields back to {slug}/publish/{slug}.md on GitHub.
 
-    The request body should be a JSON object of frontmatter fields from the UI form.
+    The request body is validated by PaperSaveRequest (Pydantic) before reaching
+    this handler — invalid or missing required fields return 422 automatically.
+
     This endpoint:
       1. Fetches the current .md file from GitHub to get the paper body and SHA
       2. Merges the new fields into the frontmatter (also auto-fills derived fields)
@@ -116,7 +117,8 @@ async def save_paper(slug: str, request: Request, _: str = Depends(check_auth)):
 
     Returns {"ok": true} on success.
     """
-    new_fields = await request.json()
+    # Convert the validated Pydantic model to a plain dict, drop unset optionals
+    new_fields = body.model_dump(exclude_none=True)
 
     # Always set the slug field to match the folder name
     new_fields["slug"] = slug
