@@ -68,6 +68,34 @@ APP_USER     = os.environ.get("APP_USER", "admin")
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "pressroom")
 
 
+# ── JWT Authentication ────────────────────────────────────────────────────────
+# Secret key used to sign JWT tokens. Must be a long random string.
+# Generate one with: python -c "import secrets; print(secrets.token_hex(32))"
+# JWT_EXPIRY_MINUTES controls how long a login session lasts.
+
+JWT_SECRET         = os.environ.get("JWT_SECRET", "change-me-in-production")
+try:
+    JWT_EXPIRY_MINUTES = int(os.environ.get("JWT_EXPIRY_MINUTES", "480"))
+except ValueError:
+    raise ValueError(
+        "JWT_EXPIRY_MINUTES must be a whole number of minutes (e.g. 480). "
+        f"Got: {os.environ.get('JWT_EXPIRY_MINUTES')!r}"
+    )
+if JWT_EXPIRY_MINUTES <= 0:
+    raise ValueError(
+        f"JWT_EXPIRY_MINUTES must be positive, got {JWT_EXPIRY_MINUTES}. "
+        "Negative or zero values produce immediately-expired tokens."
+    )
+
+
+# ── PDF Engine ────────────────────────────────────────────────────────────────
+# Which rendering engine to use for PDF generation.
+# "pandoc" (default) uses Pandoc + XeLaTeX.
+# "sile" uses the Sile typesetting system (future).
+
+PDF_ENGINE = os.environ.get("PDF_ENGINE", "pandoc")
+
+
 # ── GitHub API ────────────────────────────────────────────────────────────────
 # Base URL for the GitHub REST API.  Unlikely to ever need changing.
 
@@ -79,7 +107,14 @@ GITHUB_API = "https://api.github.com"
 # This is inside the Docker container — nothing here survives a restart.
 
 TEMP_DIR = Path("/tmp/pressroom")
-TEMP_DIR.mkdir(exist_ok=True)
+try:
+    TEMP_DIR.mkdir(exist_ok=True)
+except OSError as _e:
+    raise OSError(
+        f"Cannot create temp directory {TEMP_DIR}: {_e}. "
+        "Check that /tmp is writable inside the container "
+        "(not mounted read-only or noexec)."
+    ) from _e
 
 
 # ─────────────────────────────────────────────────────────────────────────────

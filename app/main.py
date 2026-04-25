@@ -51,14 +51,12 @@ async def health_check():
         "papers_count": 5
     }
     """
-    # TODO: Check GitHub connection status
-    github_connected = False
-    
+    # TODO: probe GitHub API and set this to True/False based on the result
     return JSONResponse(
         status_code=200,
         content={
             "status": "ok",
             "version": "1.0.0",
-            "github_connected": github_connected,
+            "github_connected": None,  # None = not yet checked; False = confirmed down
         }
     )

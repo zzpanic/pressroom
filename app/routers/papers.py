@@ -131,11 +131,15 @@ async def save_paper(slug: str, request: Request, _: str = Depends(check_auth)):
     existing_file = await gh_get(IDEAS_WORKBENCH_REPO, md_path)
 
     if existing_file is not None:
-        # File exists — decode its content to extract the body
         import base64
-        current_text = base64.b64decode(existing_file["content"]).decode("utf-8")
+        try:
+            # File exists — decode its content to extract the body.
+            # GitHub returns content as base64; the file must be valid UTF-8.
+            current_text = base64.b64decode(existing_file["content"]).decode("utf-8")
+        except (KeyError, ValueError, UnicodeDecodeError) as exc:
+            raise HTTPException(500, f"Could not read existing file content: {exc}")
         _, body = parse_frontmatter(current_text)
-        sha = existing_file["sha"]
+        sha = existing_file.get("sha")
     else:
         # File doesn't exist yet — start with an empty body and no SHA
         body = ""

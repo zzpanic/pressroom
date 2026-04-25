@@ -48,8 +48,14 @@ async def gh_get(repo: str, path: str, headers: dict = None) -> Optional[dict]:
     Fetch a single file's metadata + base64 content from GitHub.
 
     Returns None if the file doesn't exist (404).
-    Returns the raw GitHub API response dict on success.
-    Raises an exception for other HTTP errors.
+    Returns the raw GitHub API response dict on success (structure is GitHub's
+    Contents API format — callers should not depend on undocumented keys).
+
+    Side effects: makes an HTTPS GET request to api.github.com.
+
+    Raises:
+        httpx.HTTPStatusError: for any non-404 HTTP error (e.g. 401, 403, 500).
+        httpx.RequestError:    for network failures (timeout, DNS, connection refused).
     """
     if headers is None:
         headers = WORKBENCH_HEADERS
@@ -68,12 +74,23 @@ async def gh_get_text(repo: str, path: str, headers: dict = None) -> Optional[st
     """
     Fetch a file from GitHub and return its content as a UTF-8 string.
 
-    Returns None if the file doesn't exist.
+    Returns None if the file doesn't exist or is not a regular file
+    (submodules and symlinks have no "content" field in the API response).
+
+    Side effects: makes an HTTPS GET request to api.github.com.
+
+    Raises:
+        httpx.HTTPStatusError: for non-404 HTTP errors.
+        httpx.RequestError:    for network failures.
+        UnicodeDecodeError:    if the file content is not valid UTF-8.
     """
     data = await gh_get(repo, path, headers=headers)
     if data is None:
         return None
-    # GitHub returns file content base64-encoded
+    # GitHub returns file content base64-encoded in the "content" field.
+    # Non-file responses (submodules, symlinks) may not have this field.
+    if "content" not in data:
+        return None
     return base64.b64decode(data["content"]).decode("utf-8")
 
 
@@ -82,10 +99,18 @@ async def gh_get_bytes(repo: str, path: str, headers: dict = None) -> Optional[b
     Fetch a file from GitHub and return its raw bytes.
 
     Used for binary files like PDFs.
-    Returns None if the file doesn't exist.
+    Returns None if the file doesn't exist or has no "content" field.
+
+    Side effects: makes an HTTPS GET request to api.github.com.
+
+    Raises:
+        httpx.HTTPStatusError: for non-404 HTTP errors.
+        httpx.RequestError:    for network failures.
     """
     data = await gh_get(repo, path, headers=headers)
     if data is None:
+        return None
+    if "content" not in data:
         return None
     return base64.b64decode(data["content"])
 
@@ -94,8 +119,15 @@ async def gh_list(repo: str, path: str, headers: dict = None) -> list:
     """
     List the contents of a folder in a GitHub repo.
 
-    Returns a list of dicts, each describing one file or subfolder.
-    Returns an empty list if the folder doesn't exist.
+    Returns a list of GitHub Contents API entry dicts (keys: name, path, type, sha, …).
+    Returns an empty list if the folder doesn't exist OR if path points to a file
+    rather than a folder — callers cannot distinguish these two cases.
+
+    Side effects: makes an HTTPS GET request to api.github.com.
+
+    Raises:
+        httpx.HTTPStatusError: for non-404 HTTP errors.
+        httpx.RequestError:    for network failures.
     """
     if headers is None:
         headers = WORKBENCH_HEADERS
@@ -133,7 +165,13 @@ async def gh_put(
                existing file; omit when creating a new file)
     - headers: which auth token to use (defaults to WORKBENCH_HEADERS)
 
-    Returns the GitHub API response dict.
+    Returns the GitHub API response dict (Contents API format).
+
+    Side effects: creates or overwrites a file and produces a git commit in the repo.
+
+    Raises:
+        httpx.HTTPStatusError: e.g. 409 Conflict if sha is wrong/missing for an update.
+        httpx.RequestError:    for network failures.
     """
     if headers is None:
         headers = WORKBENCH_HEADERS
@@ -165,6 +203,12 @@ async def gh_put_bytes(
     Create or update a binary file (e.g. a PDF) in a GitHub repo.
 
     Same parameters as gh_put, except content is raw bytes instead of a string.
+
+    Side effects: creates or overwrites a file and produces a git commit in the repo.
+
+    Raises:
+        httpx.HTTPStatusError: e.g. 409 Conflict if sha is wrong/missing for an update.
+        httpx.RequestError:    for network failures.
     """
     if headers is None:
         headers = WORKBENCH_HEADERS

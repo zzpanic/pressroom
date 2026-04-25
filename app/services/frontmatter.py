@@ -64,6 +64,10 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
         print(fields["title"])   # "My Paper"
         print(body[:50])         # "# Introduction\nThe actual paper..."
     """
+    # Guard against None — gh_get_text() returns None for missing files
+    if text is None:
+        return {}, ""
+
     # If the document doesn't start with ---, there is no frontmatter
     if not text.startswith("---"):
         return {}, text
@@ -84,8 +88,10 @@ def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     try:
         fields = yaml.safe_load(yaml_block) or {}
     except yaml.YAMLError:
-        # If the YAML is broken, return empty fields and the full original text
-        return {}, text
+        # Broken YAML: return empty fields but preserve the body (not the full file).
+        # We still extract the body so the paper text isn't lost.
+        # Callers that need to detect broken frontmatter should check fields == {}.
+        return {}, body
 
     return fields, body
 
@@ -119,11 +125,11 @@ def apply_derived_fields(fields: dict[str, Any]) -> dict[str, Any]:
     Called before writing frontmatter back to GitHub, so the .md file always
     has a complete and consistent set of metadata.
 
-    Derived fields:
-      - status:      gate name in UPPERCASE (e.g. "exploratory" → "EXPLORATORY")
-      - version:     canonical version string for the gate (e.g. "v0.1-exploratory")
-      - license_url: URL matching the license name
-      - date:        today's date (updated on every save)
+    Derived fields (only set when the source field is present and non-empty):
+      - status:      gate name in UPPERCASE (e.g. "exploratory" → "EXPLORATORY"); omitted if gate is absent
+      - version:     canonical version string for the gate (e.g. "v0.1-exploratory"); only set if gate is known and version is not already set
+      - license_url: URL matching the license name; omitted if license is unknown
+      - date:        today's date — always updated on every save
     """
     updated = dict(fields)
 

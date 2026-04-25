@@ -97,7 +97,7 @@ def get_pdf_engine() -> PDFEngine:
 
     TODO: Implement based on config.PDF_ENGINE setting:
         from config import PDF_ENGINE
-        
+
         if PDF_ENGINE == "sile":
             from services.pdf.sile_engine import SileEngine
             return SileEngine()
@@ -106,3 +106,32 @@ def get_pdf_engine() -> PDFEngine:
             return PandocEngine()
     """
     pass
+
+
+async def generate_pdf(slug: str, body: str, frontmatter: dict, template: str) -> Path:
+    """
+    Generate a PDF for the given paper using the configured engine.
+
+    This is the main entry point called by routers — it selects the engine
+    via get_pdf_engine() and delegates to its generate() method.
+
+    PARAMETERS:
+    - slug: Paper identifier (used for temp file naming)
+    - body: Markdown body text (everything after the frontmatter block)
+    - frontmatter: Parsed YAML metadata dict
+    - template: Full content of the LaTeX/Sile template file
+
+    RETURNS:
+    - Path: Local filesystem path to the generated PDF file
+
+    RAISES:
+    - RuntimeError: If no PDF engine is configured (get_pdf_engine stub not yet implemented)
+
+    TODO: This will work automatically once get_pdf_engine() is implemented.
+    """
+    engine = get_pdf_engine()
+    if engine is None:
+        raise RuntimeError(
+            "PDF engine not yet configured. Implement get_pdf_engine() in services/pdf/base.py."
+        )
+    return await engine.generate(slug, body, frontmatter, template)

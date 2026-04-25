@@ -82,10 +82,18 @@ def build_snapshot_path(user_id: str, slug: str, gate: str, version: Optional[st
         >>> path.base_path
         '/pubs/user1/my-paper/v0.1-alpha'
     """
-    # TODO: Implement version auto-generation from GATE_VERSIONS mapping
+    # TODO: Implement full version auto-generation from GATE_VERSIONS mapping
     if version is None:
         version = f"v0.1-{gate}"
-    
+
+    # Validate inputs using the validators defined in this module.
+    # Done here rather than inside SnapshotPath so the error is caught at
+    # construction time, not later when the path is used.
+    if not validate_slug_format(slug):
+        raise ValueError(f"Invalid slug '{slug}'. Must be lowercase letters, digits, hyphens, or underscores.")
+    if not validate_version_format(version):
+        raise ValueError(f"Invalid version string '{version}'. Expected format: v0.1-exploratory or v1.0.")
+
     return SnapshotPath(user_id=user_id, slug=slug, version=version)
 
 
@@ -135,8 +143,11 @@ def validate_version_format(version: str) -> bool:
         >>> validate_version_format("invalid")
         False
     """
-    # TODO: Implement regex validation
-    pattern = r"^v\d+\.\d+-\w+$"
+    if not isinstance(version, str):
+        return False
+    # Gate suffix is optional only for v1.0 (published has no gate suffix per spec §6).
+    # All other versions must end in one of the five known gate names.
+    pattern = r"^v\d+\.\d+(-(?:alpha|exploratory|draft|review|published))?$"
     return bool(re.match(pattern, version))
 
 
@@ -159,8 +170,11 @@ def validate_slug_format(slug: str) -> bool:
         >>> validate_slug_format("My Paper!")
         False
     """
-    # TODO: Implement regex validation
-    pattern = r"^[a-z0-9_-]+$"
+    if not isinstance(slug, str):
+        return False
+    # Must start with a letter or digit (not a hyphen or underscore) so slugs
+    # are meaningful path components and consistent with preview.py's _SLUG_RE.
+    pattern = r"^[a-z0-9][a-z0-9_-]*$"
     return bool(re.match(pattern, slug))
 
 

@@ -113,7 +113,8 @@ pressroom/
 │   └── static/                     # Frontend assets
 │       ├── index.html
 │       ├── css/
-│       └── js/
+│       ├── js/
+│       └── templates/              # Bundled fallback document templates
 ├── .github/
 │   └── workflows/
 │       └── docker-build.yml        # Builds and pushes image to GHCR on push to main
@@ -209,9 +210,9 @@ pressroom-spec-v0.1-alpha.pdf
 
 ### 7.1 Stateless Design with Lightweight User Store
 
-The app holds no persistent content state. All content and config is read from and written to GitHub via API on demand. User authentication data (JWT secrets, per-user GitHub tokens) is stored in a local SQLite database (`/data/pressroom.db` inside the container).
+The app holds no persistent content state. All content and config is read from and written to GitHub via API on demand. User authentication data (JWT secrets, per-user GitHub tokens) is stored in a local SQLite database (`/app/data/pressroom.db` inside the container).
 
-> **Why SQLite?** SQLite stores data in a single file on disk. It's simple, requires no separate database server, and is fast enough for a single-user or small multi-user application. The `/data` volume persists the database across container restarts.
+> **Why SQLite?** SQLite stores data in a single file on disk. It's simple, requires no separate database server, and is fast enough for a single-user or small multi-user application. The `/app/data` volume persists the database across container restarts.
 
 The SQLite store contains three tables:
 
@@ -314,6 +315,8 @@ Pressroom reads user config (templates, author details) from `{user-workbench}/z
 In multi-user mode, each user's tokens and repo URLs are resolved from the SQLite store at authentication time. The `config.py` module gains an async `get_user_config(user_id)` method that returns a `UserConfig` dataclass with per-user values:
 
 ```python
+from dataclasses import dataclass
+
 # Dataclass is a lightweight class that stores data (like a struct in C)
 # The @dataclass decorator auto-generates __init__, __repr__, and __eq__ methods
 @dataclass
@@ -345,11 +348,12 @@ The publish workflow transforms a working draft into a versioned, published snap
 2. **Generate PDF** — render `{idea-slug}.md` → `{idea-slug}.pdf` via selected PDF engine
    - The PDF engine (Pandoc or Sile) processes the markdown + LaTeX template into a PDF file
    - Output is written to `/tmp/pressroom/{slug}/{slug}.pdf` (local temp directory)
-3. **Write review copy** — push generated PDF back to `{idea-slug}/publish/{idea-slug}.pdf` in workbench
-   - `gh_put_bytes()` uploads the PDF, creating a commit on the branch
+3. **Write review copy** — upload the generated PDF from `/tmp/pressroom/{slug}/{slug}.pdf` to `{idea-slug}/publish/{idea-slug}.pdf` in the workbench repo
+   - `gh_put_bytes()` reads the PDF from the local temp path and pushes it to GitHub, creating a commit on the branch
 4. **Review** — author opens PDF in browser preview, inspects it
    - The browser receives the PDF as an inline response (`Content-Type: application/pdf`)
 5. **Approve** — author confirms version string, gate, metadata in UI
+   - The UI pre-fills the version string auto-derived from the current gate (e.g. `exploratory` → `v0.1-exploratory`); the author can override it before confirming
    - A POST request to `/api/papers/{slug}/publish` with `{"version": "v0.1-exploratory"}`
 6. **Snapshot** — Pressroom creates `{idea-slug}/v{semver}-{gate}/` in workbench with frozen copies of MD, PDF, and artifacts
    - `create_snapshot()` copies files from `publish/` to the versioned folder
@@ -483,6 +487,39 @@ User-uploaded templates are validated before use:
 GitHub tokens are encrypted at rest using AES-256-GCM with a master key derived from `JWT_SECRET`:
 
 ```python
+import hashlib
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import secrets
+from config import JWT_SECRET
+
+def derive_key(secret: str, user_id: str) -> bytes:
+    """
+    Derive a per-user AES-256 encryption key from JWT_SECRET and user_id.
+    
+    Why PBKDF2? JWT_SECRET is a text string, not a cryptographic key.
+    PBKDF2 (Password-Based Key Derivation Function 2) stretches it into
+    a proper 256-bit key suitable for AES-256 encryption.
+    
+    The user_id is used as the salt — this means each user gets a
+    different derived key even if the underlying JWT_SECRET is shared.
+    
+    Parameters:
+        secret:  The JWT_SECRET env var value (master secret)
+        user_id: The user's unique ID (used as salt)
+    
+    Returns:
+        bytes: 32-byte (256-bit) key suitable for AES-256-GCM
+    """
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,           # 32 bytes = 256 bits (required for AES-256)
+        salt=user_id.encode(),
+        iterations=100_000,  # NIST minimum recommendation for PBKDF2-SHA256
+    )
+    return kdf.derive(secret.encode())
+
 # Encryption flow — called when a user logs in or saves a new token
 def encrypt_token(github_token: str, user_id: str) -> bytes:
     """
@@ -650,11 +687,11 @@ class TaskQueue:
         loop = asyncio.get_event_loop()
         task_result = TaskResult(task_id=task_id, status="running")
         
-        # Run the async function in a thread pool so it doesn't block the event loop
-        # run_in_executor schedules fn(*args) to run in the default thread pool
-        # await waits for that thread to finish, then returns the result
+        # Await the async function directly — async functions don't need a thread pool,
+        # they yield control back to the event loop while waiting (e.g. for I/O).
+        # run_in_executor is only for blocking *synchronous* code.
         try:
-            result = await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
+            result = await fn(*args, **kwargs)
             task_result.status = "completed"
             task_result.result = result
         except Exception as exc:
@@ -700,6 +737,7 @@ Future publish formats are implemented as pluggable publishers under `services/p
 # services/publishers/base.py
 from typing import Protocol
 from pathlib import Path
+from dataclasses import dataclass
 
 class Publisher(Protocol):
     """
@@ -755,7 +793,7 @@ class PublishResult:
 | `html` | Styled HTML page | 🔴 Deferred | Jinja2 templates |
 | `zenodo` | Zenodo deposition with DOI | 🔴 Deferred | zenodo-api client |
 
-> **Status legend:** ✅ = ready to use, 🟡 = stub exists but not functional, 🔴 = not started
+> **Status legend:** ✅ = ready to use, 🟡 = partially implemented / stub exists, 🔴 = not started
 
 ---
 
@@ -776,6 +814,7 @@ Pressroom supports two authentication modes depending on deployment:
 
 ```python
 # auth.py — HTTP Basic authentication check
+import secrets
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from config import APP_USER, APP_PASSWORD
@@ -1263,11 +1302,11 @@ COPY --from=builder /usr/bin/pandoc /usr/bin/pandoc
 COPY --from=builder /usr/bin/xelatex /usr/bin/xelatex
 COPY --from=builder /usr/local/lib /usr/local/lib
 
-# Copy application code
-COPY app/ /app/
+# Copy application code (build context is ./app, so . refers to the app/ directory)
+COPY . /app/
 
 # Install Python dependencies (much smaller than installing all dev deps)
-RUN pip install --no-cache-dir -r app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Create temp directory and non-root user for security
 RUN mkdir -p /tmp/pressroom && chown appuser:appuser /tmp/pressroom
@@ -1321,7 +1360,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - pressroom-data:/app/data    # SQLite DB and temp files persist across restarts
+      - pressroom-data:/app/data    # SQLite DB persists; /tmp/pressroom is ephemeral (temp PDFs regenerated as needed)
     env_file:
       - .env                        # Load environment variables from .env file
     restart: unless-stopped           # Auto-restart on failure or system reboot
@@ -1373,8 +1412,82 @@ Items not yet implemented, tracked here for future reference:
 | pressroom-pubs web frontend / index page | 🔴 Deferred | Static site generator for published output |
 | GitHub Actions publish workflow | 🟡 Partial | Stubs in place; direct API push is current implementation |
 | Zenodo DOI minting | 🔴 Deferred | Requires Zenodo API integration and token storage |
+| Temp file accumulation in `/tmp/pressroom/` | 🔴 Deferred | PDF temp files are never cleaned up; disk will fill over time — needs TTL or on-startup wipe |
+| Partial publish failure / no rollback | 🔴 Deferred | If snapshot succeeds but mirror fails, no rollback exists — user must retry manually; needs transactional design or retry queue |
+| `status` field absent when `gate` is missing | 🟡 Partial | `apply_derived_fields()` correctly skips `status` when no gate is set, but callers must not assume the field is always present |
+| `derive_version_from_gate` fallback for unknown gates | 🟡 Partial | Returns `v0.0-{gate}` for unrecognised gate values rather than raising — safe only because Pydantic validation blocks unknown gates at the API boundary; direct internal calls are unguarded |
 
-> **Status legend:** ✅ = ready to use, 🟡 = partially implemented, 🟡 = stub exists, 🔴 = not started
+> **Status legend:** ✅ = ready to use, 🟡 = partially implemented / stub exists, 🔴 = not started
+
+### 18.1 Test Coverage Required
+
+The following test scenarios are not yet written. Grouped by the type of guarantee each test provides.
+
+#### Assumptions
+
+| Scenario | Target | Notes |
+|---|---|---|
+| `parse_frontmatter()` with malformed YAML (unclosed quotes, bad indentation) | `services/frontmatter.py` | Returns `({}, body)` silently — callers can't distinguish broken YAML from absent frontmatter |
+| `gh_get_text()` / `gh_get_bytes()` when API response lacks `"content"` field (symlink, submodule) | `github.py` | Returns `None` — verify this path rather than assuming normal file response |
+| `apply_derived_fields()` when `gate` is absent and `version` is also absent | `services/frontmatter.py` | Neither `status` nor `version` is set; callers must not assume either key exists |
+| `request.json()` body is a list or primitive, not a dict | `routers/publish.py`, `routers/papers.py` | `isinstance` guard exists in publish; no guard in papers — verify 400 is returned |
+| `build_snapshot_path()` with a gate value not in `GATE_VERSIONS` | `services/snapshot.py` | Falls back to `v0.1-{gate}`; verify this is caught by `validate_version_format()` |
+
+#### Invariants
+
+| Scenario | Target | Notes |
+|---|---|---|
+| `apply_derived_fields()` — `status` equals `gate.upper()` for all five valid gates | `services/frontmatter.py` | Parameterise across alpha, exploratory, draft, review, published |
+| `apply_derived_fields()` — `date` is always today's UTC date regardless of input | `services/frontmatter.py` | Any pre-existing `date` in input is overwritten |
+| `validate_slug_format()` — rejects uppercase, spaces, leading hyphens/underscores, empty string, `None` | `services/snapshot.py` | Consistent with `_SLUG_RE` used in routers |
+| `validate_version_format()` — accepts `v0.1-alpha` … `v0.3-review`, `v1.0`; rejects `v1.0-published`, `v0.1-invalid`, `v1`, `1.0` | `services/snapshot.py` | Gate suffix is optional only for `v1.0` |
+| Frontmatter roundtrip — `parse_frontmatter(write_frontmatter(body, fields))` round-trips without data loss | `services/frontmatter.py` | Field order, unicode values, nested `author` dict |
+| `apply_derived_fields()` with unknown license — `license_url` is absent from output | `services/frontmatter.py` | Silently skips; verify the key is not added |
+
+#### Branches
+
+| Scenario | Target | Branch condition |
+|---|---|---|
+| `gh_get()` returns `None` on 404, raises on 403, raises on 500 | `github.py:67` | Three separate paths from `r.status_code` |
+| `gh_list()` on a file path (not a folder) — returns `[]` | `github.py:117` | `isinstance(data, list)` is False |
+| `parse_frontmatter()` — opening `---` present but no closing `---` | `frontmatter.py:73` | `closing == -1` early return |
+| `parse_frontmatter()` — `text is None` | `frontmatter.py:68` | Null guard returns `({}, "")` |
+| `save_paper()` — `existing_file` is `None` (new file, no SHA) vs. exists (update) | `routers/papers.py:133` | Both branches of the `if existing_file is not None` block |
+| `publish_paper()` — PDF not yet generated (gh_get returns None for PDF) | `routers/publish.py:68` | 409 Conflict returned before snapshot |
+| `preview_pdf()` — slug fails `_SLUG_RE` | `routers/preview.py:58` | 400 returned immediately |
+| `get_template()` — name fails `_TEMPLATE_NAME_RE` | `routers/templates.py` | 400 returned immediately |
+
+#### Failure Modes
+
+| Scenario | Target | Expected behaviour |
+|---|---|---|
+| GitHub returns 403 Forbidden on any call | `github.py` | `httpx.HTTPStatusError` propagates; routers should surface a 502/503, not a raw traceback |
+| GitHub returns 500 on any call | `github.py` | Same as 403 — verify error surfaced cleanly |
+| Network timeout (`httpx.ConnectTimeout`) | `github.py` | Same — verify no bare exception leaks to client |
+| `gh_get_text()` on a file with non-UTF-8 bytes | `github.py:80` | `UnicodeDecodeError` raised — verify router catches or documents this |
+| `save_paper()` with frontmatter missing `title` | `routers/papers.py` | No validation exists — verify whether incomplete frontmatter is accepted or rejected |
+| `publish_paper()` with invalid gate in frontmatter (e.g. `"typo"`) | `routers/publish.py:85` | 422 returned with gate list |
+| `publish_paper()` with malformed version string (e.g. `"v1"`, `"1.0"`, `"../etc"`) | `routers/publish.py:61` | 400 returned; path-unsafe strings must not reach snapshot |
+| `preview_pdf()` with slug `"..%2F.."` or `"../secret"` | `routers/preview.py:58` | 400 returned; slug never touches the filesystem |
+| `config.py` import with `JWT_EXPIRY_MINUTES="-1"` or `"abc"` | `config.py:79` | `ValueError` raised at startup with a descriptive message |
+| `config.py` import when `/tmp/pressroom` cannot be created | `config.py:109` | `OSError` raised at startup with a descriptive message |
+| `SnapshotCreationError` raised with slug + version — verify both appear in message | `exceptions.py` | Dead-parameter fix — confirm context string is included |
+| `MirrorError` raised with pubs_repo — verify repo appears in message | `exceptions.py` | Same |
+
+#### Integration Points
+
+| Scenario | Components exercised | Notes |
+|---|---|---|
+| GET `/api/papers` — verify `zz-pressroom` folder and dot-folders are excluded | `papers.list_papers` → `gh_list` | Filtering logic has no dedicated test |
+| GET `/api/papers/{slug}` — file missing returns 404; broken YAML returns empty fields | `papers.get_paper` → `gh_get_text` → `parse_frontmatter` | Both error paths |
+| GET `/api/papers/{slug}/versions` — sorts correctly, excludes `publish/` folder | `papers.get_versions` → `gh_list` | Sort order and filter |
+| POST `/api/papers/{slug}` — full save roundtrip with mock GitHub | `papers.save_paper` → `apply_derived_fields` → `write_frontmatter` → `gh_put` | Verify commit message and content |
+| GET `/api/preview/{slug}` — full PDF preview with mock GitHub and mock Pandoc | `preview.preview_pdf` → `gh_get_text` → `generate_pdf` → `gh_put_bytes` | Verify PDF pushed back to GitHub |
+| POST `/api/papers/{slug}/publish` — snapshot + mirror with mock services | `publish.publish_paper` → `create_snapshot` → `mirror_to_pubs` | Verify SnapshotPath from `create_snapshot` is passed to `mirror_to_pubs` |
+| POST `/api/papers/{slug}/publish` — mirror fails after snapshot succeeds | `publish.publish_paper` | Verify 500 returned and message distinguishes which step failed |
+| All protected endpoints — missing/wrong Basic Auth returns 401 | `auth.check_auth` via `Depends` | Parameterise across all routers |
+| GET `/api/templates/{name}` — valid name returns content + headers; invalid name returns 400; missing name returns 404 | `templates.get_template` → `gh_get_text` | Three paths |
+| `parse_frontmatter` → `apply_derived_fields` → `write_frontmatter` → `parse_frontmatter` | `services/frontmatter.py` | Roundtrip must be lossless for all spec §5 fields |
 
 ---
 

@@ -67,7 +67,7 @@ class PressroomException(Exception):
         self.message = message
         self.error_code = error_code
         self.http_status = http_status
-        self.details = details or {}
+        self.details = dict(details) if details else {}  # shallow copy — caller cannot mutate our state
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -113,7 +113,6 @@ class InvalidGateError(InvalidFrontmatterError):
         super().__init__(
             message=f"Gate value '{gate}' is not valid. Must be one of: alpha, exploratory, draft, review, published",
             field="gate",
-            details={"invalid_gate": gate}
         )
 
 
@@ -194,7 +193,7 @@ class GitHubRateLimitError(GitHubAPIError):
         super().__init__(
             message="GitHub API rate limit exceeded",
             status_code=429,
-            details={"reset_at": reset_at}
+            response_body=f"Rate limit resets at: {reset_at}" if reset_at else None,
         )
 
 
@@ -286,10 +285,10 @@ class SnapshotCreationError(PublishWorkflowError):
     """
 
     def __init__(self, message: str, slug: str = "", version: str = ""):
+        context = f" (slug={slug!r}, version={version!r})" if slug or version else ""
         super().__init__(
-            message=message,
+            message=message + context,
             step="snapshot_creation",
-            details={"slug": slug, "version": version}
         )
 
 
@@ -301,8 +300,8 @@ class MirrorError(PublishWorkflowError):
     """
 
     def __init__(self, message: str, pubs_repo: str = ""):
+        context = f" (pubs_repo={pubs_repo!r})" if pubs_repo else ""
         super().__init__(
-            message=message,
+            message=message + context,
             step="mirror_to_pubs",
-            details={"pubs_repo": pubs_repo}
         )

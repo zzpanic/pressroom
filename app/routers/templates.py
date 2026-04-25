@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from auth import check_auth
@@ -8,6 +10,9 @@ router = APIRouter()
 
 _CONFIG_FOLDER = "zz-pressroom"
 
+# Template names must be safe path components — no dots, slashes, or traversal sequences.
+_TEMPLATE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
 
 @router.get("/api/templates")
 async def list_templates(_: str = Depends(check_auth)):
@@ -17,6 +22,8 @@ async def list_templates(_: str = Depends(check_auth)):
 
 @router.get("/api/templates/{name}")
 async def get_template(name: str, _: str = Depends(check_auth)):
+    if not _TEMPLATE_NAME_RE.match(name):
+        raise HTTPException(400, f"Invalid template name '{name}'.")
     content = await gh_get_text(PRESSROOM_REPO, f"templates/{name}.md")
     if content is None:
         raise HTTPException(404, f"Template '{name}' not found")

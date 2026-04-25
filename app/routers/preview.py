@@ -23,11 +23,17 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
+import re
+
 from auth import check_auth
 from config import IDEAS_WORKBENCH_REPO, PRESSROOM_REPO, TEMP_DIR
 from github import gh_get, gh_get_text, gh_put_bytes
 from services.frontmatter import parse_frontmatter
 from services.pdf import generate_pdf
+
+# Slug must be lowercase letters, digits, hyphens, underscores only.
+# This blocks path traversal (e.g. "../etc") before the slug touches the filesystem.
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 router = APIRouter()
 
@@ -49,6 +55,9 @@ async def preview_pdf(slug: str, _: str = Depends(check_auth)):
     Raises HTTP 404 if the LaTeX template isn't found in the pressroom repo.
     Raises HTTP 500 if Pandoc fails (includes the error output for debugging).
     """
+    if not _SLUG_RE.match(slug):
+        raise HTTPException(400, f"Invalid slug '{slug}'. Must be lowercase letters, digits, hyphens, or underscores.")
+
     md_path = f"{slug}/publish/{slug}.md"
 
     # Step 1 — fetch the paper markdown from GitHub
@@ -76,7 +85,7 @@ async def preview_pdf(slug: str, _: str = Depends(check_auth)):
     # generate_pdf() writes temp files under /tmp/pressroom/{slug}/ and returns
     # the path to the generated PDF file
     try:
-        output_path = generate_pdf(slug, body, frontmatter, latex_raw)
+        output_path = await generate_pdf(slug, body, frontmatter, latex_raw)
     except RuntimeError as exc:
         # Pandoc failed — return its stderr so the user can see what went wrong
         raise HTTPException(500, f"PDF generation failed:\n{exc}")
@@ -88,7 +97,7 @@ async def preview_pdf(slug: str, _: str = Depends(check_auth)):
 
     # Check if a review PDF already exists (need its SHA to overwrite it)
     existing_pdf = await gh_get(IDEAS_WORKBENCH_REPO, pdf_gh_path)
-    existing_sha = existing_pdf["sha"] if existing_pdf else None
+    existing_sha = existing_pdf.get("sha") if existing_pdf else None
 
     await gh_put_bytes(
         IDEAS_WORKBENCH_REPO,
@@ -118,6 +127,9 @@ async def download_pdf(slug: str, _: str = Depends(check_auth)):
     Raises HTTP 404 if no preview has been generated in the current session.
     (The /tmp folder is cleared when the Docker container restarts.)
     """
+    if not _SLUG_RE.match(slug):
+        raise HTTPException(400, f"Invalid slug '{slug}'.")
+
     output_path = TEMP_DIR / slug / f"{slug}.pdf"
 
     if not output_path.exists():

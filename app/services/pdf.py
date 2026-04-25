@@ -21,6 +21,6 @@ warnings.warn(
 )
 
 # Re-export for backward compatibility (deprecated)
-from services.pdf.base import PDFEngine, get_pdf_engine
+from .pdf.base import PDFEngine, get_pdf_engine, generate_pdf
 
-__all__ = ["PDFEngine", "get_pdf_engine"]
+__all__ = ["PDFEngine", "get_pdf_engine", "generate_pdf"]
