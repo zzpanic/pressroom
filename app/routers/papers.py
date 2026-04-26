@@ -36,19 +36,16 @@ router = APIRouter()
 _CONFIG_FOLDER = "zz-pressroom"
 
 
-async def _get_paper_meta(slug: str) -> dict:
+async def _get_paper_meta(slug: str) -> dict | None:
     """
     Fetch a paper's title, gate, and version from its frontmatter.
 
-    Makes one GitHub API call per paper.  Called in parallel via asyncio.gather
-    so the full list loads in roughly the time of a single request.
-
-    Returns safe defaults if the file doesn't exist or has no frontmatter,
-    so the paper still appears in the list even if it's brand new.
+    Returns None if {slug}/publish/{slug}.md does not exist — those slugs are
+    excluded from the paper list (they have no publishable file yet).
     """
     text = await gh_get_text(IDEAS_WORKBENCH_REPO, f"{slug}/publish/{slug}.md")
-    if not text:
-        return {"slug": slug, "title": slug, "gate": "", "version": "unpublished"}
+    if text is None:
+        return None
     fm, _ = parse_frontmatter(text)
     return {
         "slug":    slug,
@@ -78,9 +75,9 @@ async def list_papers(_: str = Depends(check_auth)):
         and not i["name"].startswith(".")
         and i["name"] != _CONFIG_FOLDER
     ]
-    # Fetch all frontmatters concurrently rather than one at a time
+    # Fetch all frontmatters concurrently — filter out slugs with no publish file
     metas = await asyncio.gather(*[_get_paper_meta(s) for s in slugs])
-    return list(metas)
+    return [m for m in metas if m is not None]
 
 
 @router.get("/api/papers/{slug}")

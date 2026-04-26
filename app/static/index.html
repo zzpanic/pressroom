@@ -31,12 +31,14 @@
     <!-- ── LEFT PANE ── -->
     <div class="left-pane">
 
-      <!-- Paper list — always visible at the top -->
-      <div class="paper-list-section">
-        <div class="section-header">Papers</div>
-        <ul class="paper-list" id="paper-list">
-          <li class="list-loading">Loading...</li>
-        </ul>
+      <!-- Paper selector dropdown -->
+      <div class="paper-select-section">
+        <div class="section-header">Select paper</div>
+        <div style="padding:12px 16px">
+          <select id="paper-select" onchange="onPaperSelect()" style="width:100%">
+            <option value="">— loading papers... —</option>
+          </select>
+        </div>
       </div>
 
       <!-- Paper form and actions — hidden until a paper is selected -->

@@ -73,64 +73,50 @@ async function loadSelects() {
 }
 
 
-// ── Paper list ────────────────────────────────────────────────────────────────
+// ── Paper dropdown ────────────────────────────────────────────────────────────
 
 async function loadPapersList() {
-  // /api/papers now returns [{slug, title, gate, version}] with frontmatter metadata
-  const list = document.getElementById('paper-list');
-  list.innerHTML = '<li class="list-loading">Loading...</li>';
+  // /api/papers returns [{slug, title, gate, version}] — only papers that have
+  // a publish/{slug}.md file are included.
+  const sel = document.getElementById('paper-select');
 
   let papers;
   try {
     papers = await api('/api/papers');
   } catch (e) {
-    list.innerHTML = `<li class="list-empty">Error loading papers: ${e.message}</li>`;
+    sel.innerHTML = '<option value="">Error loading papers</option>';
     return;
   }
 
   if (!papers.length) {
-    list.innerHTML = '<li class="list-empty">No papers found in ideas-workbench.</li>';
+    sel.innerHTML = '<option value="">No papers found</option>';
     return;
   }
 
   // Sort alphabetically by slug
   papers.sort((a, b) => a.slug.localeCompare(b.slug));
 
-  list.innerHTML = papers.map(p => `
-    <li class="paper-row" data-slug="${p.slug}" onclick="selectPaper('${p.slug}')">
-      <div style="flex:1;min-width:0">
-        <div class="paper-row-name">${p.slug}</div>
-        ${p.title && p.title !== p.slug
-          ? `<div class="paper-row-title">${escapeHtml(p.title)}</div>`
-          : ''}
-      </div>
-      <span class="gate-badge ${gateBadgeClass(p.gate, p.version)}">${badgeLabel(p.gate, p.version)}</span>
-    </li>
-  `).join('');
+  sel.innerHTML = '<option value="">— select a paper —</option>' +
+    papers.map(p => {
+      const label = p.title && p.title !== p.slug
+        ? `${p.slug} — ${p.title} (${badgeLabel(p.gate, p.version)})`
+        : `${p.slug} (${badgeLabel(p.gate, p.version)})`;
+      return `<option value="${p.slug}">${label}</option>`;
+    }).join('');
 }
 
-function gateBadgeClass(gate, version) {
-  // Pick a colour class based on the gate, or unpublished if no version yet
-  if (!gate && (!version || version === 'unpublished')) return 'badge-unpublished';
-  const map = {
-    alpha: 'badge-alpha',
-    exploratory: 'badge-exploratory',
-    draft: 'badge-draft',
-    review: 'badge-review',
-    published: 'badge-published',
-  };
-  return map[gate] || 'badge-unpublished';
+function onPaperSelect() {
+  const slug = document.getElementById('paper-select').value;
+  if (slug) selectPaper(slug);
 }
 
 function badgeLabel(gate, version) {
-  // Show the version string, or the gate name if version is missing, or "unpublished"
   if (version && version !== 'unpublished') return version;
   if (gate) return gate;
   return 'unpublished';
 }
 
 function escapeHtml(str) {
-  // Prevent XSS when injecting paper titles into innerHTML
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
@@ -138,11 +124,6 @@ function escapeHtml(str) {
 // ── Select a paper ────────────────────────────────────────────────────────────
 
 async function selectPaper(slug) {
-  // Highlight the clicked row
-  document.querySelectorAll('.paper-row').forEach(r => r.classList.remove('active'));
-  const row = document.querySelector(`.paper-row[data-slug="${slug}"]`);
-  if (row) row.classList.add('active');
-
   // Reset state
   currentSlug = slug;
   pdfReady    = false;

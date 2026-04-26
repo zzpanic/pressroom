@@ -212,7 +212,7 @@ async def preview_html(slug: str, req: PreviewRequest, _: str = Depends(check_au
     cmd = [
         "pandoc", str(input_md),
         "--to", "html5",
-        "--no-standalone",      # body fragment only — no <html>/<head>/<body> tags
+        # Omitting --standalone gives a body fragment (no <html>/<head>/<body>)
         "--highlight-style", "pygments",
         "-o", str(output_html),
     ]
