@@ -7,7 +7,7 @@
 %% ── Packages ────────────────────────────────────────────────────────────────
 \usepackage[a4paper, top=25mm, bottom=25mm, left=25mm, right=25mm]{geometry}
 \usepackage{fontspec}
-\setmainfont{TeX Gyre Heros}
+\setmainfont{Liberation Sans}
 \usepackage{microtype}
 \usepackage{xcolor}
 \usepackage{titlesec}
