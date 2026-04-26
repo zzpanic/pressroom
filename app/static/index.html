@@ -11,7 +11,6 @@
   <!-- ── Top bar ── -->
   <header class="header">
     <h1>&#8962; Pressroom</h1>
-    <!-- repo-label is populated by app.js on startup -->
     <span class="sub" id="repo-label">loading...</span>
   </header>
 
@@ -31,7 +30,7 @@
     <!-- ════════════════════════════════════════════════════════════════════ -->
     <div id="panel-publish">
 
-      <!-- Step 1: enter the paper slug and load it -->
+      <!-- Load paper -->
       <div class="panel">
         <div class="panel-header">Load paper</div>
         <div class="panel-body">
@@ -43,12 +42,51 @@
         </div>
       </div>
 
-      <!-- The rest of the form is hidden until a paper is loaded -->
+      <!-- Everything below is hidden until a paper is loaded -->
       <div id="publish-form" class="hidden">
 
-        <!-- Step 2: work through the QA checklist -->
+        <!-- Author strip — read-only, sourced from env vars -->
+        <div class="author-strip" id="author-strip">
+          <span class="author-label">Author</span>
+          <span id="author-display"></span>
+        </div>
+
+        <!-- Paper details -->
         <div class="panel">
-          <div class="panel-header">Checklist</div>
+          <div class="panel-header">Paper</div>
+          <div class="panel-body">
+            <div class="form-row"><label>Title</label><input type="text" id="m-title"></div>
+            <div class="form-row"><label>Subtitle</label><input type="text" id="m-subtitle" placeholder="One-sentence summary"></div>
+            <hr class="divider">
+            <div class="form-row">
+              <label>Gate</label>
+              <select id="m-gate" onchange="updateVersion()">
+                <option value="alpha">Alpha — title and stubs only</option>
+                <option value="exploratory">Exploratory — real content, unfinished</option>
+                <option value="draft">Draft — structured and substantive</option>
+                <option value="review">Review — complete, ready for final QA</option>
+                <option value="published">Published — packaged and live</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Version</label>
+              <input type="text" id="m-version" placeholder="v0.1-exploratory">
+            </div>
+            <hr class="divider">
+            <div class="form-row">
+              <label>Template</label>
+              <select id="m-template"><option>loading...</option></select>
+            </div>
+            <div class="form-row">
+              <label>License</label>
+              <select id="m-license"><option>loading...</option></select>
+            </div>
+          </div>
+        </div>
+
+        <!-- QA checklist -->
+        <div class="panel">
+          <div class="panel-header">QA checklist</div>
           <div class="panel-body">
             <ul class="checklist">
               <li>
@@ -62,14 +100,7 @@
                 <input type="checkbox" id="chk-prior-art">
                 <div class="check-label">
                   <div>Prior art searched</div>
-                  <div class="check-note">Searched for existing work — findings logged below</div>
-                </div>
-              </li>
-              <li>
-                <input type="checkbox" id="chk-ai">
-                <div class="check-label">
-                  <div>AI usage disclosed</div>
-                  <div class="check-note">Ideation, writing, or research assistance noted below</div>
+                  <div class="check-note">Searched for existing work — findings logged in Notes below</div>
                 </div>
               </li>
               <li>
@@ -97,65 +128,61 @@
           </div>
         </div>
 
-        <!-- Step 3: review and edit metadata -->
+        <!-- AI usage disclosure -->
         <div class="panel">
-          <div class="panel-header">Metadata</div>
+          <div class="panel-header">AI usage disclosure</div>
           <div class="panel-body">
-
-            <div class="form-row"><label>Title</label><input type="text" id="m-title"></div>
-            <div class="form-row"><label>Subtitle</label><input type="text" id="m-subtitle" placeholder="One-sentence summary"></div>
-
-            <hr class="divider">
-
-            <div class="form-row"><label>Author name</label><input type="text" id="m-author-name"></div>
-            <div class="form-row"><label>Author email</label><input type="text" id="m-author-email"></div>
-            <div class="form-row"><label>Author GitHub</label><input type="text" id="m-author-github"></div>
-
-            <hr class="divider">
-
-            <div class="form-row">
-              <label>Gate</label>
-              <select id="m-gate" onchange="updateVersion()">
-                <option value="alpha">Alpha — title and stubs only</option>
-                <option value="exploratory">Exploratory — real content, unfinished</option>
-                <option value="draft">Draft — structured and substantive</option>
-                <option value="review">Review — complete, ready for final QA</option>
-                <option value="published">Published — packaged and live</option>
-              </select>
+            <p class="field-note" style="margin-bottom:14px">Tick every type of AI assistance used in producing this paper.</p>
+            <div class="ai-checks">
+              <label class="ai-check-item">
+                <input type="checkbox" id="m-ai-ideation">
+                <span class="ai-check-label">
+                  <strong>Ideation</strong>
+                  <span>AI helped generate or develop the core idea</span>
+                </span>
+              </label>
+              <label class="ai-check-item">
+                <input type="checkbox" id="m-ai-writing">
+                <span class="ai-check-label">
+                  <strong>Writing</strong>
+                  <span>AI drafted or rewrote sections of text</span>
+                </span>
+              </label>
+              <label class="ai-check-item">
+                <input type="checkbox" id="m-ai-research">
+                <span class="ai-check-label">
+                  <strong>Research</strong>
+                  <span>AI was used to find or summarise sources</span>
+                </span>
+              </label>
             </div>
-            <div class="form-row">
-              <label>Version</label>
-              <input type="text" id="m-version" placeholder="v0.1-exploratory">
+            <div class="form-row" style="margin-top:14px">
+              <label>Tool / model used</label>
+              <input type="text" id="m-ai-tool" placeholder="e.g. claude-sonnet-4-6">
             </div>
-
-            <hr class="divider">
-
-            <div class="form-row">
-              <label>Template</label>
-              <select id="m-template"><option>loading...</option></select>
-            </div>
-            <div class="form-row">
-              <label>License</label>
-              <select id="m-license"><option>loading...</option></select>
-            </div>
-
-            <hr class="divider">
-
-            <div class="form-row"><label>AI — Ideation</label><input type="checkbox" id="m-ai-ideation" style="width:auto"></div>
-            <div class="form-row"><label>AI — Writing</label><input type="checkbox" id="m-ai-writing" style="width:auto"></div>
-            <div class="form-row"><label>AI — Research</label><input type="checkbox" id="m-ai-research" style="width:auto"></div>
-            <div class="form-row"><label>AI tool / model</label><input type="text" id="m-ai-tool" placeholder="e.g. claude-sonnet-4-6"></div>
-
-            <hr class="divider">
-
-            <div class="form-row"><label>Prior art notes</label><textarea id="m-prior-art" placeholder="Queries run and findings..."></textarea></div>
-            <div class="form-row"><label>GitHub repo URL</label><input type="text" id="m-github-repo" placeholder="populated on first publish"></div>
-            <div class="form-row"><label>Zenodo DOI</label><input type="text" id="m-zenodo-doi" placeholder="populated after Zenodo upload"></div>
-
           </div>
         </div>
 
-        <!-- PDF preview iframe (hidden until Preview PDF is clicked) -->
+        <!-- Notes -->
+        <div class="panel">
+          <div class="panel-header">Notes</div>
+          <div class="panel-body">
+            <div class="form-row">
+              <label>Prior art</label>
+              <textarea id="m-prior-art" placeholder="Queries run and findings..."></textarea>
+            </div>
+            <div class="form-row">
+              <label>GitHub repo</label>
+              <input type="text" id="m-github-repo" placeholder="populated on first publish">
+            </div>
+            <div class="form-row">
+              <label>Zenodo DOI</label>
+              <input type="text" id="m-zenodo-doi" placeholder="populated after Zenodo upload">
+            </div>
+          </div>
+        </div>
+
+        <!-- PDF preview iframe -->
         <div class="panel hidden" id="pdf-panel">
           <div class="panel-header">PDF preview</div>
           <div class="panel-body">
@@ -174,7 +201,7 @@
       <div class="panel">
         <div class="panel-header">Generate AI prompt</div>
         <div class="panel-body">
-          <p style="font-size:13px;color:var(--gray);margin-bottom:16px">
+          <p class="field-note" style="margin-bottom:16px">
             Generate a prompt to paste into Claude, OpenWebUI, or any AI.
             The AI produces a structured markdown paper with
             <code>[PLACEHOLDER: ...]</code> markers for anything incomplete.
@@ -221,12 +248,12 @@
 
   </main>
 
-  <!-- ── Action bar — fixed to bottom, shown only when a paper is loaded ── -->
+  <!-- ── Action bar — fixed to bottom, visible once a paper is loaded ── -->
   <div class="action-bar hidden" id="action-bar">
     <div class="action-bar-inner">
       <button class="btn btn-secondary" onclick="previewPDF()">Preview PDF</button>
       <button class="btn btn-secondary" onclick="downloadPDF()">Download PDF</button>
-      <button class="btn btn-secondary" onclick="savePaper()">Save metadata</button>
+      <button class="btn btn-secondary" onclick="savePaper()">Save</button>
       <button class="btn btn-success" onclick="publishPaper()">Publish &#8594; GitHub</button>
       <div id="action-msg" class="action-msg"></div>
     </div>

@@ -168,6 +168,13 @@ async function loadPaper() {
     // Fill the form fields with the paper's frontmatter values
     populatePublishForm(data);
 
+    // Show author strip
+    const authorDisplay = document.getElementById('author-display');
+    if (authorDisplay) {
+      authorDisplay.textContent = [config.author_name, config.author_email, config.author_github]
+        .filter(Boolean).join('  ·  ');
+    }
+
     // Show the rest of the form and the bottom action bar
     document.getElementById('publish-form').classList.remove('hidden');
     document.getElementById('action-bar').classList.remove('hidden');
@@ -198,13 +205,6 @@ function populatePublishForm(data) {
   setValue('m-title',    fm.title    || '');
   setValue('m-subtitle', fm.subtitle || '');
 
-  // Author — the spec stores this as a nested object {name, email, github}
-  // We display three separate form fields and reassemble them on save
-  const author = fm.author || {};
-  setValue('m-author-name',   author.name   || config.author_name   || '');
-  setValue('m-author-email',  author.email  || config.author_email  || '');
-  setValue('m-author-github', author.github || config.author_github || '');
-
   // Gate and version
   setValue('m-gate',    fm.gate    || 'exploratory');
   setValue('m-version', fm.version || gateToVersion(fm.gate || 'exploratory'));
@@ -226,12 +226,9 @@ function populatePublishForm(data) {
   setValue('m-github-repo', fm.github_repo          || '');
   setValue('m-zenodo-doi',  fm.zenodo_doi            || '');
 
-  // QA checklist state — stored under 'checklist' in the frontmatter
-  // (Pressroom adds this; it's not in the spec schema but persists QA state)
   const chk = fm.checklist || {};
   setChecked('chk-content',      chk.content_reviewed      || false);
   setChecked('chk-prior-art',    chk.prior_art_searched    || false);
-  setChecked('chk-ai',           chk.ai_disclosed          || false);
   setChecked('chk-placeholders', chk.placeholders_resolved || false);
   setChecked('chk-license',      chk.license_confirmed     || false);
   setChecked('chk-refs',         chk.references_complete   || false);
@@ -253,11 +250,11 @@ function buildFrontmatter() {
     subtitle: val('m-subtitle'),
     slug:     currentSlug,
 
-    // Author as a nested object (matches spec §5 schema)
+    // Author always comes from config (env vars) in single-user mode
     author: {
-      name:   val('m-author-name'),
-      email:  val('m-author-email'),
-      github: val('m-author-github'),
+      name:   config.author_name,
+      email:  config.author_email,
+      github: config.author_github,
     },
 
     // Gate and version
@@ -282,11 +279,9 @@ function buildFrontmatter() {
     github_repo:          val('m-github-repo'),
     zenodo_doi:           val('m-zenodo-doi'),
 
-    // QA checklist state (Pressroom-managed, not in spec schema)
     checklist: {
       content_reviewed:      checked('chk-content'),
       prior_art_searched:    checked('chk-prior-art'),
-      ai_disclosed:          checked('chk-ai'),
       placeholders_resolved: checked('chk-placeholders'),
       license_confirmed:     checked('chk-license'),
       references_complete:   checked('chk-refs'),
@@ -389,7 +384,7 @@ async function downloadPDF() {
 async function publishPaper() {
   // Guard: all checklist items must be ticked
   const allChecked = [
-    'chk-content', 'chk-prior-art', 'chk-ai',
+    'chk-content', 'chk-prior-art',
     'chk-placeholders', 'chk-license', 'chk-refs',
   ].every(id => checked(id));
 

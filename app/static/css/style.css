@@ -76,6 +76,22 @@ textarea { resize: vertical; min-height: 80px; }
 .msg-info { background: #cfe2ff; color: #084298; }
 .msg-warn { background: #fff3cd; color: #664d03; }
 
+/* ── Author strip ── */
+.author-strip { max-width: 860px; margin: 0 auto 16px; padding: 8px 16px; background: white; border: 1px solid var(--border); border-radius: 4px; display: flex; align-items: center; gap: 10px; font-size: 13px; color: #444; }
+.author-label { font-weight: 600; color: var(--gray); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; flex-shrink: 0; }
+
+/* ── AI disclosure checkboxes ── */
+.ai-checks { display: flex; gap: 12px; flex-wrap: wrap; }
+.ai-check-item { display: flex; align-items: flex-start; gap: 8px; background: var(--light); border: 1px solid var(--border); border-radius: 4px; padding: 10px 14px; cursor: pointer; flex: 1; min-width: 160px; }
+.ai-check-item input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--accent); flex-shrink: 0; margin-top: 2px; }
+.ai-check-label { display: flex; flex-direction: column; gap: 2px; }
+.ai-check-label strong { font-size: 13px; font-weight: 600; }
+.ai-check-label span { font-size: 11px; color: var(--gray); }
+.ai-check-item:has(input:checked) { border-color: var(--accent); background: var(--accent-light); }
+
+/* ── Field note / hint text ── */
+.field-note { font-size: 13px; color: var(--gray); line-height: 1.6; }
+
 /* ── Misc ── */
 .paper-select-row { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; }
 .paper-select-row input { flex: 1; }
