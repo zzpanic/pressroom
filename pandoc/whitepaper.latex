@@ -54,7 +54,9 @@
 \usepackage{fancyvrb}
 \usepackage{listings}
 \usepackage{soul}
-\usepackage{amsmath,amssymb}
+%% amsmath and amssymb are intentionally omitted — unicode-math (loaded above
+%% in the XeLaTeX path) supersedes both and defines all the same symbols.
+%% Loading amssymb on top causes a "already defined" conflict on \eth and others.
 
 %% Allow URLs to break across lines
 \IfFileExists{xurl.sty}{\usepackage{xurl}}{}
