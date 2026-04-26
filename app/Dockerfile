@@ -2,7 +2,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Builds the Pressroom Docker image.
 #
-# Base image: pandoc/extra:latest-ubuntu
+# Base image: pandoc/extra:3.6.4-ubuntu
 #   This comes with Pandoc and a full TeX Live installation pre-installed,
 #   which is everything needed to run XeLaTeX for PDF generation.
 #   See: https://github.com/pandoc/dockerfiles
@@ -25,7 +25,7 @@
 # pushing to GitHub, not rebuilding this image.
 # ─────────────────────────────────────────────────────────────────────────────
 
-FROM pandoc/extra:latest-ubuntu
+FROM pandoc/extra:3.6.4-ubuntu
 
 # Install Python, pip, and common fonts in a single layer to keep image size down.
 # --no-install-recommends avoids pulling in large optional packages.

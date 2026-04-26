@@ -2,16 +2,12 @@ version: '3.8'
 
 services:
   pressroom:
-    build: .
+    image: ghcr.io/zzpanic/pressroom:latest
     ports:
       - "8000:8000"
-    environment:
-      - IDEAS_WORKBENCH_GIT_TOKEN=${IDEAS_WORKBENCH_GIT_TOKEN}
-      - PRESSROOM_PUBS_GIT_TOKEN=${PRESSROOM_PUBS_GIT_TOKEN}
-      - APP_USER=${APP_USER}
-      - APP_PASSWORD=${APP_PASSWORD}
+    env_file:
+      - stack.env
     volumes:
-      # Mount data directory for persistent storage
       - pressroom-data:/app/data
     restart: unless-stopped
 

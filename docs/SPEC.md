@@ -83,33 +83,42 @@ Mirrors the versioned snapshots from the user's workbench on publication:
 pressroom/
 ├── app/
 │   ├── main.py                     # FastAPI application entry point
-│   ├── auth.py                     # Authentication (JWT + HTTP Basic)
+│   ├── auth.py                     # HTTP Basic auth + JWT token functions
+│   ├── auth_store.py               # JWT middleware, token encryption (AES-256-GCM)
 │   ├── config.py                   # Configuration and env var management
+│   ├── database.py                 # SQLite init, connection management, helpers
+│   ├── exceptions.py               # Custom exception classes + structured error responses
 │   ├── github.py                   # GitHub API abstraction layer
-│   ├── exceptions.py               # Custom exception classes
-│   ├── logging_config.py           # Structured logging setup
-│   ├── models.py                   # Pydantic request/response models
+│   ├── logging_config.py           # Structured JSON logging + RequestIDMiddleware
+│   ├── models.py                   # Pydantic request/response validation models
 │   ├── Dockerfile                  # Container build instructions
 │   ├── requirements.txt            # Python dependencies
 │   ├── routers/                    # API endpoint definitions
+│   │   ├── __init__.py
+│   │   ├── auth.py                # POST /api/auth/login — JWT issuance
+│   │   ├── config.py              # Author config from user's workbench
 │   │   ├── papers.py              # Paper metadata CRUD operations
 │   │   ├── preview.py             # PDF generation + review workflow
 │   │   ├── publish.py             # Versioned snapshot + mirror
-│   │   ├── templates.py           # Template listing and upload
-│   │   ├── status.py              # Task status polling (future)
-│   │   └── config.py            # Author config from user's workbench
+│   │   ├── status.py              # GET /api/status/{task_id} — async task polling
+│   │   └── templates.py           # Template listing and upload
 │   ├── services/                   # Business logic
+│   │   ├── __init__.py
 │   │   ├── frontmatter.py         # YAML frontmatter parsing/writing
-│   │   ├── pdf/                   # Modular PDF engine system
-│   │   │   ├── base.py            # PDFEngine protocol (interface)
-│   │   │   ├── pandoc_engine.py  # Pandoc + XeLaTeX implementation
-│   │   │   └── sile_engine.py    # Sile (Lua-based typesetting) stub
 │   │   ├── snapshot.py            # Snapshot creation + mirror to pubs
-│   │   └── publishers/           # Extensible publish formats (future)
-│   │       ├── base.py
-│   │       ├── pdf.py
-│   │       ├── blog.py           # Blog post publishing stub
-│   │       └── docx.py           # DOCX export stub
+│   │   ├── task_queue.py          # Async background task queue (SQLite-backed)
+│   │   ├── template_resolver.py   # Template resolution (workbench → local fallback)
+│   │   ├── pdf/                   # Modular PDF engine system
+│   │   │   ├── __init__.py        # Exports generate_pdf()
+│   │   │   ├── base.py            # PDFEngine abstract base + get_pdf_engine() factory
+│   │   │   ├── pandoc_engine.py   # Pandoc + XeLaTeX implementation
+│   │   │   └── sile_engine.py     # Sile (Lua-based typesetting) implementation
+│   │   └── publishers/            # Extensible publish formats
+│   │       ├── __init__.py
+│   │       ├── base.py            # Publisher protocol + get_publisher() factory
+│   │       ├── pdf.py             # PDF publisher (local filesystem storage)
+│   │       ├── blog.py            # Blog post publishing stub
+│   │       └── docx.py            # DOCX export stub
 │   └── static/                     # Frontend assets
 │       ├── index.html
 │       ├── css/
@@ -118,7 +127,8 @@ pressroom/
 ├── .github/
 │   └── workflows/
 │       └── docker-build.yml        # Builds and pushes image to GHCR on push to main
-├── docker-compose.yml              # Container orchestration
+├── docker-compose.yml              # Container orchestration (Dockge)
+├── .env.example                    # Template for stack.env — copy and fill in secrets
 ├── LICENSE
 ├── README.md
 └── docs/
@@ -1272,104 +1282,95 @@ def test_apply_derived_fields_version_auto_fill():
 
 ## 16. Docker and Deployment
 
-### 16.1 Multi-Stage Build — Smaller Image
+### 16.1 Base Image — Official Pandoc Image
+
+The Dockerfile uses the official `pandoc/extra` image as its base rather than installing Pandoc inside a Python image. This image is maintained by the Pandoc team and comes with Pandoc and a full TeX Live distribution pre-installed.
 
 ```dockerfile
-# Dockerfile — multi-stage build to minimize final image size
+# app/Dockerfile
+FROM pandoc/extra:3.6.4-ubuntu
 
-# ── Stage 1: builder ──────────────────────────────────────────────
-# Install Pandoc and LaTeX dependencies in a full Python image.
-# These are large (~500MB) but we only need the binaries, not the
-# full Python environment, in the final image.
-FROM python:3.12-slim AS builder
-
-# Install pandoc and basic LaTeX packages
-RUN apt-get update && apt-get install -y \
-    pandoc \
-    texlive-base \
-    texlive-xetex \
-    texlive-fonts-recommended \
-    texlive-fonts-extra \
-    liberation-fonts \
+# Add Python, pip, and common fonts on top of the Pandoc base
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    fonts-liberation \
+    fonts-dejavu \
+    fonts-freefont-ttf \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Stage 2: runtime ─────────────────────────────────────────────
-# Copy only the binaries we need from the builder stage.
-# The final image is ~150MB instead of ~700MB.
-FROM python:3.12-slim AS runtime
+RUN fc-cache -fv
 
-COPY --from=builder /usr/bin/pandoc /usr/bin/pandoc
-COPY --from=builder /usr/bin/xelatex /usr/bin/xelatex
-COPY --from=builder /usr/local/lib /usr/local/lib
+WORKDIR /app
 
-# Copy application code (build context is ./app, so . refers to the app/ directory)
-COPY . /app/
+COPY requirements.txt .
+RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
-# Install Python dependencies (much smaller than installing all dev deps)
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Create temp directory and non-root user for security
-RUN mkdir -p /tmp/pressroom && chown appuser:appuser /tmp/pressroom
-USER appuser
+COPY *.py .
+COPY routers/ ./routers/
+COPY services/ ./services/
+COPY static/ ./static/
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT []
+CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-> **Multi-stage build explanation:** Docker builds happen in stages. The `builder` stage installs large dependencies (Pandoc, LaTeX). The `runtime` stage copies only the needed binaries, resulting in a much smaller final image (~150MB vs ~700MB). This is important for:
-> - Faster container pulls
-> - Smaller attack surface (fewer packages = fewer vulnerabilities)
-> - Lower storage costs
+> **Why pandoc/extra as the base?** Installing Pandoc + full TeX Live via `apt-get` inside a plain Python image produces a very large image and is slow to build. The `pandoc/extra` image is purpose-built by the Pandoc team with everything needed for PDF generation already in place. We add Python on top. The version is pinned (`3.6.4-ubuntu`) so builds are reproducible — using `latest` risks silent breakage when Pandoc releases a new version. XeLaTeX can only use fonts physically installed in the image; Liberation, DejaVu, and FreeFont cover most use cases. If a LaTeX template requires a specific font, add it with an additional `apt-get install` line.
 
-### 16.2 Health Check
+### 16.2 CI/CD — GitHub Actions + GHCR
+
+The image is built and pushed automatically by GitHub Actions on every push to `main`:
+
+```
+.github/workflows/docker-build.yml
+```
+
+The pushed image is tagged `ghcr.io/zzpanic/pressroom:latest` and pulled by Dockge on the host.
+
+### 16.3 Health Check
+
+```python
+# main.py — GET /api/health
+# Returns 200 OK with current status including a live GitHub connectivity probe:
+# {"status": "ok", "version": "1.0.0", "github_connected": true/false}
+```
+
+Docker health check (add to Dockerfile if automated container restart is needed):
 
 ```dockerfile
-# Add to Dockerfile for Docker health monitoring
-HEALTHCHECK --interval=60s --timeout=5s --start-period=10s \
+HEALTHCHECK --interval=60s --timeout=10s --start-period=30s \
   CMD curl -f http://localhost:8000/api/health || exit 1
 ```
 
-```python
-# main.py — Health check endpoint
-@app.get("/api/health")
-async def health_check():
-    """
-    Simple health check for Docker monitoring.
-    
-    Returns 200 OK with {"status": "ok"}.
-    Docker (or Kubernetes) calls this periodically to determine
-    if the container is healthy. If it fails 3 times, the
-    container is marked as unhealthy and restarted.
-    """
-    return {"status": "ok"}
-```
+> **Health check explanation:** The `/api/health` endpoint makes a live probe to the GitHub API to verify connectivity, not just that the process is running. `start-period=30s` gives the container time to start before health checks begin — important because startup validation (env vars, database init) runs synchronously.
 
-> **Health check explanation:** Docker's `HEALTHCHECK` instruction runs the specified command every 60 seconds. If `curl` returns non-zero (the endpoint is down), Docker marks the container as `unhealthy`. After 3 consecutive failures, Docker restarts the container. This provides automatic recovery from crashes.
+### 16.4 Docker Compose — Dockge Deployment
 
-### 16.3 Docker Compose with Data Volume
+The app is deployed via Dockge using a pre-built image from GHCR. The `docker-compose.yml` in the repo root is the Dockge stack file:
 
 ```yaml
-# docker-compose.yml
-version: "3.8"
+version: '3.8'
 
 services:
   pressroom:
-    build: ./app
-    image: pressroom:latest
+    image: ghcr.io/zzpanic/pressroom:latest
     ports:
       - "8000:8000"
-    volumes:
-      - pressroom-data:/app/data    # SQLite DB persists; /tmp/pressroom is ephemeral (temp PDFs regenerated as needed)
     env_file:
-      - .env                        # Load environment variables from .env file
-    restart: unless-stopped           # Auto-restart on failure or system reboot
+      - stack.env
+    volumes:
+      - pressroom-data:/app/data
+    restart: unless-stopped
 
 volumes:
-  pressroom-data:                     # Named volume — persists /app/data
+  pressroom-data:
+    driver: local
 ```
 
-> **Volume explanation:** Without the `volumes` directive, when the container is recreated (e.g., after a code update), the SQLite database in `/app/data` would be lost. The named volume `pressroom-data` persists the database across container recreates. Data survives even if the container is deleted.
+> **`stack.env`** is the Dockge convention for the local secrets file. It is never committed to git. Copy `.env.example` to `stack.env` on the Dockge host and fill in real values. All required environment variables are documented in `.env.example`. **`build:` is intentionally absent** — Dockge pulls the pre-built image from GHCR rather than building locally. Building requires the full Pandoc/TeX Live base image and takes several minutes; this is done once in GitHub Actions, not on every Dockge deployment. The named volume `pressroom-data` persists `/app/data` (the SQLite database) across container recreates. `/tmp/pressroom/` is intentionally ephemeral — PDF temp files are wiped on startup and regenerated on demand.
 
 ---
 
@@ -1408,14 +1409,17 @@ Items not yet implemented, tracked here for future reference:
 | Item | Status | Notes |
 |---|---|---|
 | HTML preview before PDF generation | 🔴 Deferred | Requires Jinja2 template rendering |
-| Multiple document style templates | 🟡 Partial | Template upload added; only whitepaper template exists |
+| Multiple document style templates | 🟡 Partial | Template upload implemented; only whitepaper template bundled |
 | pressroom-pubs web frontend / index page | 🔴 Deferred | Static site generator for published output |
-| GitHub Actions publish workflow | 🟡 Partial | Stubs in place; direct API push is current implementation |
+| GitHub Actions publish workflow | ✅ Implemented | Builds and pushes to GHCR on push to main |
 | Zenodo DOI minting | 🔴 Deferred | Requires Zenodo API integration and token storage |
-| Temp file accumulation in `/tmp/pressroom/` | 🔴 Deferred | PDF temp files are never cleaned up; disk will fill over time — needs TTL or on-startup wipe |
-| Partial publish failure / no rollback | 🔴 Deferred | If snapshot succeeds but mirror fails, no rollback exists — user must retry manually; needs transactional design or retry queue |
+| Temp file accumulation in `/tmp/pressroom/` | ✅ Implemented | Wiped on container startup in `main.py`; ephemeral by design |
+| Partial publish failure / no rollback | 🔴 Deferred | If snapshot succeeds but mirror fails, user must retry manually; needs transactional design or retry queue |
 | `status` field absent when `gate` is missing | 🟡 Partial | `apply_derived_fields()` correctly skips `status` when no gate is set, but callers must not assume the field is always present |
 | `derive_version_from_gate` fallback for unknown gates | 🟡 Partial | Returns `v0.0-{gate}` for unrecognised gate values rather than raising — safe only because Pydantic validation blocks unknown gates at the API boundary; direct internal calls are unguarded |
+| Blog publisher (`BlogPublisher.publish()`) | 🟡 Partial | Stub exists; implementation deferred until blog CMS target is decided |
+| DOCX publisher (`DocxPublisher.publish()`) | 🟡 Partial | Stub exists; requires LibreOffice or python-docx in image |
+| Per-user GitHub token save (`POST /api/auth/token`) | 🟡 Partial | Endpoint returns 501; encrypt/decrypt implemented but not wired to a route with auth |
 
 > **Status legend:** ✅ = ready to use, 🟡 = partially implemented / stub exists, 🔴 = not started
 
