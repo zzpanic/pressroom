@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pressroom — Help</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <style>
+    /* Help page uses a single-column layout instead of the app shell grid */
+    body { background: #f0f0f0; }
+    .help-shell { max-width: 860px; margin: 0 auto; padding: 24px; }
+    .help-header { background: var(--accent); color: white; border-radius: 4px; padding: 16px 24px; margin-bottom: 24px; display: flex; align-items: center; gap: 16px; }
+    .help-header h1 { font-size: 18px; font-weight: 600; letter-spacing: 0.05em; }
+    .help-header a { margin-left: auto; color: white; font-size: 13px; opacity: 0.85; text-decoration: none; }
+    .help-header a:hover { opacity: 1; text-decoration: underline; }
+
+    /* Section headings inside panels */
+    .help-h2 { font-size: 15px; font-weight: 600; color: var(--accent); margin: 20px 0 10px; }
+    .help-h2:first-child { margin-top: 0; }
+    .help-h3 { font-size: 13px; font-weight: 600; color: #333; margin: 14px 0 6px; }
+
+    p { font-size: 13px; line-height: 1.7; color: #333; margin-bottom: 10px; }
+    p:last-child { margin-bottom: 0; }
+
+    /* Step list — numbered, with descriptions */
+    .step-list { list-style: none; counter-reset: steps; }
+    .step-list li { counter-increment: steps; display: flex; gap: 14px; margin-bottom: 14px; }
+    .step-list li::before { content: counter(steps); background: var(--accent); color: white; font-size: 12px; font-weight: 700; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
+    .step-body { flex: 1; }
+    .step-title { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+    .step-desc { font-size: 13px; color: var(--gray); line-height: 1.6; }
+
+    /* Gate table */
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 8px 12px; background: var(--light); border-bottom: 2px solid var(--border); font-weight: 600; color: #333; }
+    td { padding: 8px 12px; border-bottom: 1px solid var(--light); vertical-align: top; }
+    td:first-child { font-weight: 500; white-space: nowrap; }
+    td code { font-size: 12px; background: var(--light); padding: 1px 5px; border-radius: 2px; }
+
+    /* Inline code */
+    code { font-size: 12px; background: var(--light); padding: 1px 5px; border-radius: 2px; border: 1px solid var(--border); }
+
+    /* Tip callout */
+    .tip { background: #cfe2ff; border-left: 3px solid #084298; border-radius: 0 3px 3px 0; padding: 10px 14px; font-size: 13px; color: #084298; margin-top: 12px; }
+    .tip strong { font-weight: 600; }
+  </style>
+</head>
+<body>
+<div class="help-shell">
+
+  <div class="help-header">
+    <h1>&#8962; Pressroom — Help</h1>
+    <a href="/">&larr; Back to app</a>
+  </div>
+
+
+  <!-- ── What is Pressroom ── -->
+  <div class="panel">
+    <div class="panel-header">What is Pressroom?</div>
+    <div class="panel-body">
+      <p>
+        Pressroom is a publishing tool for ideas. You write papers in your private
+        <strong>Ideas Workbench</strong> GitHub repo using Obsidian (or any markdown editor),
+        then use Pressroom to generate a PDF, review it, and publish a versioned snapshot to
+        your public <strong>Pressroom Pubs</strong> repo.
+      </p>
+      <p>
+        Pressroom holds no content itself. Everything lives in your GitHub repos. The app just
+        connects the two repos and handles PDF generation.
+      </p>
+    </div>
+  </div>
+
+
+  <!-- ── Basic workflow ── -->
+  <div class="panel">
+    <div class="panel-header">Basic workflow</div>
+    <div class="panel-body">
+      <ol class="step-list">
+
+        <li>
+          <div class="step-body">
+            <div class="step-title">Write your paper in Obsidian</div>
+            <div class="step-desc">
+              In your Ideas Workbench repo, create a folder named with your paper's slug
+              (e.g. <code>my-paper-idea</code>). Inside it, create
+              <code>my-paper-idea/publish/my-paper-idea.md</code>.
+              This file holds both the YAML frontmatter (title, gate, author, etc.) and
+              the paper body. Write freely — Pressroom won't touch it until you ask it to.
+            </div>
+          </div>
+        </li>
+
+        <li>
+          <div class="step-body">
+            <div class="step-title">Generate a starting prompt (optional)</div>
+            <div class="step-desc">
+              Go to <strong>New paper prompt</strong> in the sidebar. Enter the slug and pick a
+              template, then click <em>Generate prompt</em>. Copy the result and paste it into
+              Claude, ChatGPT, or any AI assistant. The AI will produce a structured
+              markdown paper with <code>[PLACEHOLDER: ...]</code> markers for anything
+              incomplete. Drop that output into your <code>publish/{slug}.md</code> file.
+            </div>
+          </div>
+        </li>
+
+        <li>
+          <div class="step-body">
+            <div class="step-title">Load the paper in Pressroom</div>
+            <div class="step-desc">
+              Go to <strong>QA &amp; Publish</strong>. Type the slug into the Load paper box
+              (exactly as the folder is named) and click <em>Load</em>. Pressroom reads the
+              frontmatter from your workbench repo and populates the form.
+            </div>
+          </div>
+        </li>
+
+        <li>
+          <div class="step-body">
+            <div class="step-title">Work through the QA checklist</div>
+            <div class="step-desc">
+              The checklist is a prompt, not a gate. Tick each item as you review it.
+              You can publish without checking everything — the checklist is there to slow
+              you down and make the review deliberate.
+            </div>
+          </div>
+        </li>
+
+        <li>
+          <div class="step-body">
+            <div class="step-title">Review and edit metadata</div>
+            <div class="step-desc">
+              Check the title, subtitle, gate, version, and author fields. Set the
+              <strong>Gate</strong> to match how complete the paper is — the version string
+              auto-fills from the gate. Fill in prior art notes and AI disclosure if relevant.
+              Click <em>Save metadata</em> to write changes back to your GitHub repo.
+            </div>
+          </div>
+        </li>
+
+        <li>
+          <div class="step-body">
+            <div class="step-title">Preview the PDF</div>
+            <div class="step-desc">
+              Click <em>Preview PDF</em>. Pressroom runs Pandoc + XeLaTeX on your markdown,
+              generates a PDF, pushes a review copy back to your workbench repo
+              (<code>publish/{slug}.pdf</code>), and shows the PDF inline. This can take
+              10–30 seconds. If something looks wrong, fix the markdown in Obsidian,
+              sync to GitHub, and preview again.
+            </div>
+          </div>
+        </li>
+
+        <li>
+          <div class="step-body">
+            <div class="step-title">Publish</div>
+            <div class="step-desc">
+              When you're happy with the PDF, click <em>Publish → GitHub</em>. Pressroom:
+              <br><br>
+              1. Creates a versioned snapshot in your workbench repo at
+              <code>{slug}/v{version}/</code> containing the <code>.md</code>, <code>.pdf</code>, and any artifacts.<br>
+              2. Mirrors that snapshot to your Pressroom Pubs repo so it's publicly accessible.
+              <br><br>
+              The snapshot is frozen. Future edits and publishes create new versioned folders —
+              old versions are never modified.
+            </div>
+          </div>
+        </li>
+
+      </ol>
+    </div>
+  </div>
+
+
+  <!-- ── Gates explained ── -->
+  <div class="panel">
+    <div class="panel-header">Gates — what they mean</div>
+    <div class="panel-body">
+      <p>
+        A gate is a label for how complete an idea is. It also determines the version string
+        that gets stamped on the snapshot.
+      </p>
+      <br>
+      <table>
+        <thead>
+          <tr>
+            <th>Gate</th>
+            <th>Version</th>
+            <th>What it means</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Alpha</td>
+            <td><code>v0.1-alpha</code></td>
+            <td>Title and stubs only. The idea is captured but not yet developed.</td>
+          </tr>
+          <tr>
+            <td>Exploratory</td>
+            <td><code>v0.1-exploratory</code></td>
+            <td>Real content present. Thinking is visible and unfinished. Placeholders expected.</td>
+          </tr>
+          <tr>
+            <td>Draft</td>
+            <td><code>v0.2-draft</code></td>
+            <td>Structured and substantive. Placeholders are intentional, not forgotten.</td>
+          </tr>
+          <tr>
+            <td>Review</td>
+            <td><code>v0.3-review</code></td>
+            <td>Complete. No unresolved placeholders. Ready for final QA.</td>
+          </tr>
+          <tr>
+            <td>Published</td>
+            <td><code>v1.0</code></td>
+            <td>Packaged and live. Final state.</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="tip">
+        <strong>Tip:</strong> You can publish at any gate. Publish early and often —
+        an Alpha snapshot is a valid record that an idea existed at a point in time.
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ── Slugs explained ── -->
+  <div class="panel">
+    <div class="panel-header">What is a slug?</div>
+    <div class="panel-body">
+      <p>
+        A slug is the URL-friendly name for your paper. It must be all lowercase, with words
+        separated by hyphens and no spaces or special characters.
+      </p>
+      <p>Examples: <code>my-great-idea</code>, <code>pressroom-spec</code>, <code>ai-research-methods</code></p>
+      <p>
+        The slug is also the folder name in your Ideas Workbench repo. Everything must match —
+        the folder name, the <code>.md</code> filename, and the slug you type into Pressroom.
+      </p>
+      <div class="tip">
+        <strong>Folder structure:</strong>
+        <code>ideas-workbench / {slug} / publish / {slug}.md</code>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ── Placeholders ── -->
+  <div class="panel">
+    <div class="panel-header">Placeholders</div>
+    <div class="panel-body">
+      <p>
+        Pressroom uses a specific placeholder format throughout your paper to mark
+        content that still needs to be written:
+      </p>
+      <p><code>[PLACEHOLDER: description of exactly what goes here]</code></p>
+      <p>
+        The description should be specific enough that you (or an AI) know what to write.
+        Vague placeholders like <code>[PLACEHOLDER: content here]</code> are not useful —
+        be precise about what's needed.
+      </p>
+      <p>
+        At <strong>Review</strong> and <strong>Published</strong> gates, all placeholders
+        should be resolved. At earlier gates they are expected and acceptable.
+      </p>
+    </div>
+  </div>
+
+
+  <!-- ── Troubleshooting ── -->
+  <div class="panel">
+    <div class="panel-header">Common issues</div>
+    <div class="panel-body">
+
+      <div class="help-h3">PDF preview fails</div>
+      <p>
+        Usually a LaTeX error caused by special characters or formatting in your markdown.
+        Check for unescaped <code>%</code>, <code>&amp;</code>, <code>_</code>, or
+        <code>#</code> characters outside of code blocks. LaTeX treats these as control
+        characters. The error message in the app will indicate which line caused the problem.
+      </p>
+
+      <div class="help-h3">Paper won't load ("not found")</div>
+      <p>
+        The slug you typed doesn't match the folder name in your workbench repo exactly.
+        Check capitalisation and hyphens. Also confirm the file exists at
+        <code>{slug}/publish/{slug}.md</code> — both the folder and the file must exist.
+      </p>
+
+      <div class="help-h3">Metadata changes aren't saving</div>
+      <p>
+        Click <em>Save metadata</em> before previewing or publishing. The form fields are
+        not automatically synced — you must explicitly save to write changes back to GitHub.
+      </p>
+
+      <div class="help-h3">Publish succeeded but I can't see it in pressroom-pubs</div>
+      <p>
+        GitHub can take a few seconds to reflect new commits. Refresh your pubs repo page.
+        If it's still missing after 30 seconds, check the action message in Pressroom for
+        any error — the snapshot may have succeeded but the mirror step may have failed.
+        You can re-publish to retry.
+      </p>
+
+    </div>
+  </div>
+
+</div><!-- end .help-shell -->
+</body>
+</html>
