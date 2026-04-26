@@ -68,10 +68,9 @@ async function loadSelects() {
  * Clicking an item shows its panel and hides all others.
  */
 function setupNav() {
-  document.querySelectorAll('.sidebar-item').forEach(item => {
+  document.querySelectorAll('.nav-item[data-panel]').forEach(item => {
     item.addEventListener('click', () => {
-      // Remove 'active' from all nav items, then add it to the clicked one
-      document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
       item.classList.add('active');
 
       // Hide all panels, then show the one matching the clicked item
@@ -457,8 +456,7 @@ async function loadPapersList() {
  * @param {string} slug - the paper slug to open
  */
 function openPaper(slug) {
-  // Switch the active nav item to QA & Publish
-  document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
   document.querySelector('[data-panel="publish"]').classList.add('active');
 
   // Show the publish panel, hide all others
