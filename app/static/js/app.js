@@ -330,7 +330,8 @@ async function savePaper() {
  * This can take 20–30 seconds depending on paper length.
  */
 async function previewPDF() {
-  setMsg('action-msg', 'Generating PDF — this may take 20–30 seconds...', 'info');
+  setMsg('action-msg', 'Saving metadata then generating PDF — this may take 20–30 seconds...', 'info');
+  await savePaper();
   try {
     // POST the current form frontmatter so the PDF reflects what the user has
     // typed, not whatever is (or isn't) saved in the GitHub file yet.
