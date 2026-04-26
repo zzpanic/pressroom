@@ -48,20 +48,15 @@ WORKDIR /app
 
 # Install Python dependencies first (before copying app code).
 # Docker caches this layer — if only app code changes, pip doesn't re-run.
-COPY requirements.txt .
+# Build context is the repo root (context: .) so all app paths need the app/ prefix.
+# pandoc/ is at the repo root so it needs no prefix.
+COPY app/requirements.txt .
 RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
-# Copy the app source code and static files.
-COPY *.py .
-COPY routers/ ./routers/
-COPY services/ ./services/
-COPY static/ ./static/
-
-# Copy LaTeX templates into the image so PDF generation works without a GitHub
-# API call on every preview.  GitHub is used as a fallback only (e.g. for
-# user-uploaded templates not yet in the image).
-# The pandoc/ directory is at the repo root, so the build context must be the
-# repo root (context: . in docker-compose / GitHub Actions), not just ./app.
+COPY app/*.py .
+COPY app/routers/ ./routers/
+COPY app/services/ ./services/
+COPY app/static/ ./static/
 COPY pandoc/ ./pandoc/
 
 EXPOSE 8000
