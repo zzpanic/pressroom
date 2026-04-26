@@ -53,10 +53,7 @@ RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
 # Copy the app source code and static files.
 # Templates and LaTeX files are fetched from GitHub at runtime — not here.
-COPY main.py .
-COPY config.py .
-COPY auth.py .
-COPY github.py .
+COPY *.py .
 COPY routers/ ./routers/
 COPY services/ ./services/
 COPY static/ ./static/
