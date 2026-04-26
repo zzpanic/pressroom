@@ -5,37 +5,41 @@
   --light: #f5f5f5;
   --border: #ddd;
   --success: #2d7a2d;
-  --warning: #b47a00;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --action-bar-height: 56px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: var(--font); font-size: 14px; color: #222; background: #f0f0f0; min-height: 100vh; }
+body { font-family: var(--font); font-size: 14px; color: #222; background: #f0f0f0; min-height: 100vh; display: flex; flex-direction: column; }
 
-.shell { display: grid; grid-template-rows: 48px 1fr; grid-template-columns: 220px 1fr; height: 100vh; }
-
-.header { grid-column: 1 / -1; background: var(--accent); color: white; display: flex; align-items: center; padding: 0 20px; gap: 12px; }
+/* ── Header ── */
+.header { background: var(--accent); color: white; display: flex; align-items: center; padding: 0 24px; height: 48px; flex-shrink: 0; }
 .header h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.05em; }
 .header .sub { font-size: 12px; opacity: 0.75; margin-left: auto; }
 
-.sidebar { background: white; border-right: 1px solid var(--border); padding: 16px 0; overflow-y: auto; }
-.sidebar-section { padding: 8px 16px 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--gray); }
-.sidebar-item { display: block; padding: 7px 16px; cursor: pointer; color: #333; text-decoration: none; border-left: 3px solid transparent; }
-.sidebar-item:hover { background: var(--light); }
-.sidebar-item.active { border-left-color: var(--accent); background: var(--accent-light); color: var(--accent); font-weight: 500; }
+/* ── Top navigation tabs ── */
+.topnav { background: white; border-bottom: 1px solid var(--border); display: flex; align-items: stretch; padding: 0 24px; flex-shrink: 0; }
+.nav-item { display: flex; align-items: center; padding: 0 18px; height: 42px; font-size: 13px; font-weight: 500; color: #555; text-decoration: none; cursor: pointer; border-bottom: 3px solid transparent; white-space: nowrap; }
+.nav-item:hover { color: var(--accent); background: var(--accent-light); }
+.nav-item.active { color: var(--accent); border-bottom-color: var(--accent); }
+.nav-help { margin-left: auto; font-weight: 400; color: var(--gray); }
 
-.main { overflow-y: auto; padding: 24px; background: #f0f0f0; }
+/* ── Main content — centred single column like the help page ── */
+.main { flex: 1; padding: 24px; padding-bottom: calc(var(--action-bar-height) + 24px); overflow-y: auto; }
 
-.panel { background: white; border: 1px solid var(--border); border-radius: 4px; margin-bottom: 20px; max-width: 860px; }
-.panel-header { padding: 14px 20px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 13px; color: var(--accent); display: flex; align-items: center; gap: 8px; }
+/* ── Panels ── */
+.panel { background: white; border: 1px solid var(--border); border-radius: 4px; margin: 0 auto 20px; max-width: 860px; }
+.panel-header { padding: 14px 20px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 13px; color: var(--accent); }
 .panel-body { padding: 20px; }
 
+/* ── Forms ── */
 .form-row { display: grid; grid-template-columns: 160px 1fr; align-items: center; gap: 10px; margin-bottom: 12px; }
 label { font-size: 13px; color: var(--gray); }
 input[type=text], select, textarea { width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 3px; font-family: var(--font); font-size: 13px; color: #222; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
 textarea { resize: vertical; min-height: 80px; }
 
+/* ── Checklist ── */
 .checklist { list-style: none; }
 .checklist li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--light); font-size: 13px; }
 .checklist li:last-child { border-bottom: none; }
@@ -43,6 +47,7 @@ textarea { resize: vertical; min-height: 80px; }
 .checklist .check-label { flex: 1; }
 .checklist .check-note { font-size: 11px; color: var(--gray); }
 
+/* ── Buttons ── */
 .btn { padding: 8px 16px; border: none; border-radius: 3px; font-size: 13px; font-family: var(--font); cursor: pointer; font-weight: 500; }
 .btn-primary { background: var(--accent); color: white; }
 .btn-primary:hover { background: #8f1818; }
@@ -53,19 +58,30 @@ textarea { resize: vertical; min-height: 80px; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-row { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
 
+/* ── Fixed action bar ── */
+.action-bar { position: fixed; bottom: 0; left: 0; right: 0; height: var(--action-bar-height); background: white; border-top: 1px solid var(--border); display: flex; align-items: center; z-index: 100; }
+.action-bar-inner { max-width: 860px; width: 100%; margin: 0 auto; padding: 0 20px; display: flex; align-items: center; gap: 8px; }
+.action-msg { margin-left: 12px; font-size: 13px; flex: 1; }
+
+/* ── Prompt box ── */
 .prompt-box { background: var(--light); border: 1px solid var(--border); border-radius: 3px; padding: 14px; font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 400px; overflow-y: auto; color: #333; }
 
+/* ── PDF iframe ── */
 .pdf-frame { width: 100%; height: 600px; border: 1px solid var(--border); border-radius: 3px; }
 
+/* ── Status messages ── */
 .msg { padding: 10px 14px; border-radius: 3px; font-size: 13px; margin-top: 12px; }
 .msg-ok   { background: #d1e7dd; color: #0a3622; }
 .msg-err  { background: #f8d7da; color: #842029; }
 .msg-info { background: #cfe2ff; color: #084298; }
 .msg-warn { background: #fff3cd; color: #664d03; }
 
+/* ── Misc ── */
 .paper-select-row { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; }
 .paper-select-row input { flex: 1; }
-
 .divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 .hidden { display: none; }
 .loading { color: var(--gray); font-style: italic; font-size: 13px; }
+
+/* ── Footer ── */
+.footer { text-align: center; padding: 10px; font-size: 11px; color: #999; background: #f0f0f0; border-top: 1px solid var(--border); padding-bottom: calc(var(--action-bar-height) + 10px); }

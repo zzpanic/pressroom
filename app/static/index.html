@@ -4,11 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Pressroom</title>
-  <!-- All styles are in style.css — nothing inline here -->
   <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
-<div class="shell">
 
   <!-- ── Top bar ── -->
   <header class="header">
@@ -17,17 +15,15 @@
     <span class="sub" id="repo-label">loading...</span>
   </header>
 
-  <!-- ── Left sidebar navigation ── -->
-  <nav class="sidebar">
-    <div class="sidebar-section">Workflow</div>
-    <a class="sidebar-item active" data-panel="publish">QA &amp; Publish</a>
-    <a class="sidebar-item" data-panel="new-paper">New paper prompt</a>
-    <div class="sidebar-section" style="margin-top:12px">Library</div>
-    <a class="sidebar-item" data-panel="papers">Papers</a>
-    <div class="sidebar-section" style="margin-top:12px"></div>
-    <a class="sidebar-item" href="/static/help.html" target="_blank">Help &#8599;</a>
+  <!-- ── Horizontal navigation tabs ── -->
+  <nav class="topnav">
+    <a class="nav-item active" data-panel="publish">QA &amp; Publish</a>
+    <a class="nav-item" data-panel="new-paper">New paper prompt</a>
+    <a class="nav-item" data-panel="papers">Papers</a>
+    <a class="nav-item nav-help" href="/static/help.html" target="_blank">Help &#8599;</a>
   </nav>
 
+  <!-- ── Page content ── -->
   <main class="main">
 
     <!-- ════════════════════════════════════════════════════════════════════ -->
@@ -106,23 +102,19 @@
           <div class="panel-header">Metadata</div>
           <div class="panel-body">
 
-            <!-- Paper identity -->
             <div class="form-row"><label>Title</label><input type="text" id="m-title"></div>
             <div class="form-row"><label>Subtitle</label><input type="text" id="m-subtitle" placeholder="One-sentence summary"></div>
 
             <hr class="divider">
 
-            <!-- Author details (populated from author.yaml by default) -->
             <div class="form-row"><label>Author name</label><input type="text" id="m-author-name"></div>
             <div class="form-row"><label>Author email</label><input type="text" id="m-author-email"></div>
             <div class="form-row"><label>Author GitHub</label><input type="text" id="m-author-github"></div>
 
             <hr class="divider">
 
-            <!-- Gate and version -->
             <div class="form-row">
               <label>Gate</label>
-              <!-- Changing the gate auto-updates the version field via updateVersion() -->
               <select id="m-gate" onchange="updateVersion()">
                 <option value="alpha">Alpha — title and stubs only</option>
                 <option value="exploratory">Exploratory — real content, unfinished</option>
@@ -133,13 +125,11 @@
             </div>
             <div class="form-row">
               <label>Version</label>
-              <!-- Auto-filled by gate selection; can be manually overridden -->
               <input type="text" id="m-version" placeholder="v0.1-exploratory">
             </div>
 
             <hr class="divider">
 
-            <!-- Template and license -->
             <div class="form-row">
               <label>Template</label>
               <select id="m-template"><option>loading...</option></select>
@@ -151,7 +141,6 @@
 
             <hr class="divider">
 
-            <!-- AI disclosure -->
             <div class="form-row"><label>AI — Ideation</label><input type="checkbox" id="m-ai-ideation" style="width:auto"></div>
             <div class="form-row"><label>AI — Writing</label><input type="checkbox" id="m-ai-writing" style="width:auto"></div>
             <div class="form-row"><label>AI — Research</label><input type="checkbox" id="m-ai-research" style="width:auto"></div>
@@ -159,7 +148,6 @@
 
             <hr class="divider">
 
-            <!-- Prior art and publication links -->
             <div class="form-row"><label>Prior art notes</label><textarea id="m-prior-art" placeholder="Queries run and findings..."></textarea></div>
             <div class="form-row"><label>GitHub repo URL</label><input type="text" id="m-github-repo" placeholder="populated on first publish"></div>
             <div class="form-row"><label>Zenodo DOI</label><input type="text" id="m-zenodo-doi" placeholder="populated after Zenodo upload"></div>
@@ -167,25 +155,7 @@
           </div>
         </div>
 
-        <!-- Step 4: actions -->
-        <div class="panel">
-          <div class="panel-header">Actions</div>
-          <div class="panel-body">
-            <div class="btn-row">
-              <!-- Preview PDF: generates the PDF and pushes review copy to GitHub -->
-              <button class="btn btn-secondary" onclick="previewPDF()">Preview PDF</button>
-              <!-- Download PDF: saves the last generated PDF locally -->
-              <button class="btn btn-secondary" onclick="downloadPDF()">Download PDF</button>
-              <!-- Save: writes updated frontmatter back to {slug}.md on GitHub -->
-              <button class="btn btn-secondary" onclick="savePaper()">Save metadata</button>
-              <!-- Publish: creates versioned snapshot + mirrors to pressroom-pubs -->
-              <button class="btn btn-success" onclick="publishPaper()">Publish &#8594; GitHub</button>
-            </div>
-            <div id="action-msg"></div>
-          </div>
-        </div>
-
-        <!-- PDF preview iframe (hidden until "Preview PDF" is clicked) -->
+        <!-- PDF preview iframe (hidden until Preview PDF is clicked) -->
         <div class="panel hidden" id="pdf-panel">
           <div class="panel-header">PDF preview</div>
           <div class="panel-body">
@@ -224,7 +194,6 @@
         </div>
       </div>
 
-      <!-- Generated prompt (hidden until the button is clicked) -->
       <div class="panel hidden" id="prompt-panel">
         <div class="panel-header">Copy and paste into your AI session</div>
         <div class="panel-body">
@@ -245,21 +214,28 @@
       <div class="panel">
         <div class="panel-header">Papers</div>
         <div class="panel-body">
-          <!-- Content is populated dynamically by loadPapersList() in app.js -->
           <div id="papers-list" class="loading">Loading...</div>
         </div>
       </div>
     </div><!-- end #panel-papers -->
 
   </main>
-</div>
 
-<!-- Scripts loaded in dependency order: api.js first, then ui.js, then app.js -->
+  <!-- ── Action bar — fixed to bottom, shown only when a paper is loaded ── -->
+  <div class="action-bar hidden" id="action-bar">
+    <div class="action-bar-inner">
+      <button class="btn btn-secondary" onclick="previewPDF()">Preview PDF</button>
+      <button class="btn btn-secondary" onclick="downloadPDF()">Download PDF</button>
+      <button class="btn btn-secondary" onclick="savePaper()">Save metadata</button>
+      <button class="btn btn-success" onclick="publishPaper()">Publish &#8594; GitHub</button>
+      <div id="action-msg" class="action-msg"></div>
+    </div>
+  </div>
+
+  <footer class="footer">&copy; 2026 Patrick Nichols</footer>
+
 <script src="/static/js/api.js"></script>
 <script src="/static/js/ui.js"></script>
 <script src="/static/js/app.js"></script>
-<footer style="grid-column:1/-1;text-align:center;padding:10px;font-size:11px;color:#999;background:#f0f0f0;border-top:1px solid #ddd;">
-  &copy; 2026 Patrick Nichols
-</footer>
 </body>
 </html>

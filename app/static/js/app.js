@@ -168,8 +168,9 @@ async function loadPaper() {
     // Fill the form fields with the paper's frontmatter values
     populatePublishForm(data);
 
-    // Show the rest of the form (hidden by default)
+    // Show the rest of the form and the bottom action bar
     document.getElementById('publish-form').classList.remove('hidden');
+    document.getElementById('action-bar').classList.remove('hidden');
 
     if (!data.paper_exists) {
       setMsg('load-msg', `Warning: ${slug}/publish/${slug}.md not found. Add the file before previewing.`, 'warn');
