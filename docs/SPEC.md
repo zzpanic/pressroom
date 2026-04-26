@@ -129,6 +129,8 @@ pressroom/
 │       └── docker-build.yml        # Builds and pushes image to GHCR on push to main
 ├── docker-compose.yml              # Container orchestration (Dockge)
 ├── .env.example                    # Template for .env — copy and fill in secrets
+├── pandoc/                         # LaTeX templates used by the Pandoc PDF engine
+│   └── whitepaper.latex            # Default whitepaper template (XeLaTeX, Liberation Sans)
 ├── LICENSE
 ├── README.md
 └── docs/
@@ -265,23 +267,23 @@ All other configuration (template content, author details) is read from the user
 Environment variables are how the container receives configuration from outside. They are set in the `.env` file managed by Dockge and passed into the container via the `environment:` block in `docker-compose.yml`.
 
 ```
-# GitHub tokens — classic personal access tokens with "repo" scope
+# ── Required — app will refuse to start if these are missing ─────────────────
 IDEAS_WORKBENCH_GIT_TOKEN=ghp_xxx      # token with repo access to your papers repo
 PRESSROOM_PUBS_GIT_TOKEN=ghp_xxx       # token with repo access to your pubs repo
+IDEAS_WORKBENCH_REPO=you/ideas-workbench  # owner/repo format
+PRESSROOM_PUBS_REPO=you/pressroom-pubs   # owner/repo format
 
-# Repository names — owner/repo format
-IDEAS_WORKBENCH_REPO=you/ideas-workbench
-PRESSROOM_PUBS_REPO=you/pressroom-pubs
-
-# App authentication — login credentials for the Pressroom web UI
+# ── Required — authentication ─────────────────────────────────────────────────
 APP_USER=changeme
 APP_PASSWORD=changeme
+JWT_SECRET=changeme  # generate: python3 -c "import secrets; print(secrets.token_hex(32))"
 
-# JWT secret — signs session tokens; generate with:
-#   python3 -c "import secrets; print(secrets.token_hex(32))"
-JWT_SECRET=changeme
+# ── Optional — used by git commits when pushing to GitHub ────────────────────
+IDEAS_WORKBENCH_GIT_USER=yourusername  # GitHub username for the workbench token
+PRESSROOM_PUBS_GIT_USER=yourusername   # GitHub username for the pubs token
 
-# Author info — used when committing PDFs and snapshots to GitHub
+# ── Passed in but not yet consumed by the app ────────────────────────────────
+# These are declared in docker-compose.yml for future use (author attribution in PDFs)
 AUTHOR_NAME=Your Name
 AUTHOR_EMAIL=you@example.com
 AUTHOR_GITHUB=yourusername
@@ -1088,41 +1090,28 @@ import sys
 # REQUIRED_VARS lists every env var that must be present for the app to function.
 # If any are missing, the app exits immediately rather than failing later
 # with a confusing error deep in the call stack.
-REQUIRED_VARS = [
-    "IDEAS_WORKBENCH_GIT_TOKEN",   # Needed to read/write workbench repo
-    "PRESSROOM_PUBS_GIT_TOKEN",    # Needed to read/write pubs repo
-]
-
-def validate_config() -> None:
+def validate_config(required_keys: list) -> None:
     """
-    Validate that all required environment variables are set.
+    Validate that all required environment variables are set and non-empty.
     
-    This is called at the top of main.py, before the FastAPI app starts.
-    If validation fails, sys.exit(1) is called and the container stops.
+    Called at the top of main.py before the FastAPI app starts. Raises
+    ValueError listing every missing variable at once so the operator can
+    fix them all in one restart rather than discovering them one at a time.
     
     Why fail fast? It's better to fail on startup (where the operator
     can see the error immediately) than to fail hours later when a
     user tries to load a paper.
     """
-    missing = []
-    for var in REQUIRED_VARS:
-        if var not in os.environ:
-            missing.append(var)
-    
+    missing = [key for key in required_keys if not os.environ.get(key)]
     if missing:
-        # Print a helpful error message showing which vars are missing
-        error_msg = (
-            f"Missing required environment variables: {', '.join(missing)}\n"
-            f"Please set these in your .env file and restart the container."
+        raise ValueError(
+            f"Required environment variable(s) are missing or empty: {', '.join(missing)}. "
+            "Set them in your .env file or Docker environment before starting the server."
         )
-        print(error_msg)
-        sys.exit(1)  # Exit with error code 1 (failure)
-    
-    # Log that validation passed
-    logging.info("Configuration validated successfully")
 
-# Call at module import time — this runs before any endpoints are served
-validate_config()
+# Called in main.py at startup — four variables are required for the app to function:
+# validate_config(["IDEAS_WORKBENCH_GIT_TOKEN", "PRESSROOM_PUBS_GIT_TOKEN",
+#                  "IDEAS_WORKBENCH_REPO", "PRESSROOM_PUBS_REPO"])
 ```
 
 > **Fail-fast principle:** By validating config at startup, we catch configuration errors immediately. The alternative is to fail deep in a PDF generation call with an error like `"GitHub token not found"` — much better to fail on startup with `"Missing IDEAS_WORKBENCH_GIT_TOKEN"`.
@@ -1329,7 +1318,7 @@ services:
   pressroom:
     image: ghcr.io/zzpanic/pressroom:latest
     ports:
-      - "8000:8000"
+      - "7000:8000"  # host:container — Dockge exposes on 7000, container listens on 8000
     env_file:
       - .env
     environment:
