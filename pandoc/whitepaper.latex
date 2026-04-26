@@ -152,6 +152,11 @@ $endif$
 \setlist[itemize]{leftmargin=1.5em, itemsep=0.2em, topsep=0.3em}
 \setlist[enumerate]{leftmargin=1.5em, itemsep=0.2em, topsep=0.3em}
 
+%% Pandoc emits \tightlist for compact markdown lists and \passthrough for
+%% inline code — custom templates must define these or XeLaTeX will abort.
+\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\providecommand{\passthrough}[1]{#1}
+
 %% ── Code blocks ──────────────────────────────────────────────────────────────
 \lstset{
   basicstyle=\small\ttfamily,
