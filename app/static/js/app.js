@@ -305,7 +305,7 @@ function updateVersion() {
  * This updates the frontmatter metadata without touching the paper body.
  */
 async function savePaper() {
-  setMsg('action-msg', 'Saving...', 'info');
+  setMsg('action-msg', 'Saving metadata...', 'info');
   try {
     await api(`/api/papers/${currentSlug}/save`, {
       method:  'POST',
@@ -313,8 +313,10 @@ async function savePaper() {
       body:    JSON.stringify(buildFrontmatter()),
     });
     setMsg('action-msg', 'Metadata saved to GitHub', 'ok');
+    return true;
   } catch (e) {
-    setMsg('action-msg', `Error: ${e.message}`, 'err');
+    setMsg('action-msg', `Save failed: ${e.message}`, 'err');
+    return false;
   }
 }
 
@@ -331,7 +333,8 @@ async function savePaper() {
  */
 async function previewPDF() {
   setMsg('action-msg', 'Saving metadata then generating PDF — this may take 20–30 seconds...', 'info');
-  await savePaper();
+  const saved = await savePaper();
+  if (!saved) return;
   try {
     // POST the current form frontmatter so the PDF reflects what the user has
     // typed, not whatever is (or isn't) saved in the GitHub file yet.
