@@ -39,6 +39,48 @@ router = APIRouter()
 _limiter = Limiter(key_func=get_remote_address)
 
 
+@router.post("/api/papers/{slug}/snapshot")
+async def snapshot_paper(slug: str, request: Request, body: PublishRequest, user_id: str = Depends(check_auth)):
+    """
+    Save a versioned snapshot of the paper to ideas-workbench only (private).
+
+    This creates {slug}/v{version}/ in the workbench repo with frozen copies of
+    the markdown, PDF, and artifacts — but does NOT mirror to pressroom-pubs.
+
+    Use "Release" (POST /api/papers/{slug}/publish) to make it public.
+
+    The review PDF must already exist in GitHub — run "Generate Preview" first.
+    """
+    version = body.version
+
+    if not _VERSION_RE.match(version):
+        raise HTTPException(400, f"Invalid version format '{version}'.")
+
+    pdf_path   = f"{slug}/publish/{slug}.pdf"
+    pdf_exists = await gh_get(IDEAS_WORKBENCH_REPO, pdf_path) is not None
+    if not pdf_exists:
+        raise HTTPException(409, "Generate a preview PDF first before snapshotting.")
+
+    md_path = f"{slug}/publish/{slug}.md"
+    md_text = await gh_get_text(IDEAS_WORKBENCH_REPO, md_path)
+    if md_text is None:
+        raise HTTPException(404, f"Paper markdown not found: {md_path}")
+
+    frontmatter, paper_body = parse_frontmatter(md_text)
+    gate = frontmatter.get("gate", "")
+    if gate not in _VALID_GATES:
+        raise HTTPException(422, f"Gate '{gate}' is not valid.")
+
+    try:
+        snapshot_path = await create_snapshot(slug, paper_body, frontmatter, gate, user_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+    except Exception as exc:
+        raise HTTPException(500, f"Snapshot failed: {exc}")
+
+    return {"ok": True, "message": f"Snapshot {version} saved to ideas-workbench"}
+
+
 @router.post("/api/papers/{slug}/publish")
 @_limiter.limit("5/minute")
 async def publish_paper(slug: str, request: Request, body: PublishRequest, user_id: str = Depends(check_auth)):

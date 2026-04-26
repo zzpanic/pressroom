@@ -164,6 +164,71 @@ async def preview_pdf(slug: str, req: PreviewRequest, _: str = Depends(check_aut
     )
 
 
+@router.post("/api/preview/html/{slug}")
+async def preview_html(slug: str, req: PreviewRequest, _: str = Depends(check_auth)):
+    """
+    Render the paper as HTML using Pandoc and return the HTML fragment.
+
+    This is fast (~1 second, no XeLaTeX) and is used for the live right-pane
+    preview in the UI.  The template CSS is applied client-side.
+
+    Unlike the PDF preview, this endpoint does NOT push anything to GitHub.
+    It is safe to call whenever the template selection changes.
+
+    Returns {"html": "<p>...</p>"} — a body fragment, no <html>/<head> wrapper.
+    """
+    import asyncio
+    import subprocess
+    import yaml
+
+    if not _SLUG_RE.match(slug):
+        raise HTTPException(400, f"Invalid slug '{slug}'.")
+
+    # Fetch only the body — frontmatter comes from the form (same pattern as PDF preview)
+    md_path = f"{slug}/publish/{slug}.md"
+    md_text = await gh_get_text(IDEAS_WORKBENCH_REPO, md_path)
+    if md_text is None:
+        raise PaperNotFoundError(slug)
+
+    _, body = parse_frontmatter(md_text)
+    frontmatter = req.frontmatter
+
+    # Flatten nested author dict (same as PDF engine does)
+    pandoc_fm = dict(frontmatter)
+    if isinstance(pandoc_fm.get("author"), dict):
+        author_dict = pandoc_fm["author"]
+        pandoc_fm["author"] = author_dict.get("name", "")
+        pandoc_fm["email"]  = author_dict.get("email", "")
+
+    work_dir = TEMP_DIR / slug
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    input_md   = work_dir / "input.md"
+    output_html = work_dir / "preview.html"
+
+    fm_yaml = yaml.dump(pandoc_fm, allow_unicode=True, default_flow_style=False)
+    input_md.write_text(f"---\n{fm_yaml}---\n\n{body}", encoding="utf-8")
+
+    cmd = [
+        "pandoc", str(input_md),
+        "--to", "html5",
+        "--no-standalone",      # body fragment only — no <html>/<head>/<body> tags
+        "--highlight-style", "pygments",
+        "-o", str(output_html),
+    ]
+
+    loop = asyncio.get_event_loop()
+    proc = await loop.run_in_executor(
+        None,
+        lambda: subprocess.run(cmd, capture_output=True, text=True, cwd=str(work_dir), timeout=30),
+    )
+
+    if proc.returncode != 0:
+        raise HTTPException(500, f"HTML preview failed: {proc.stderr}")
+
+    return {"html": output_html.read_text(encoding="utf-8")}
+
+
 @router.get("/api/preview/{slug}/download")
 async def download_pdf(slug: str, _: str = Depends(check_auth)):
     """

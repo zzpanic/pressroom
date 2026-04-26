@@ -5,257 +5,235 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Pressroom</title>
   <link rel="stylesheet" href="/static/css/style.css">
+  <!-- DOMPurify sanitises the HTML returned by Pandoc before we inject it into the page -->
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 </head>
 <body>
 
-  <!-- ── Top bar ── -->
+  <!-- ── Header ── -->
   <header class="header">
     <h1>&#8962; Pressroom</h1>
     <span class="sub" id="repo-label">loading...</span>
   </header>
 
-  <!-- ── Horizontal navigation tabs ── -->
+  <!-- ── Navigation tabs ── -->
   <nav class="topnav">
-    <a class="nav-item active" data-panel="publish">QA &amp; Publish</a>
-    <a class="nav-item" data-panel="new-paper">New paper prompt</a>
-    <a class="nav-item" data-panel="papers">Papers</a>
+    <a class="nav-item active" data-view="workspace">Workspace</a>
+    <a class="nav-item" data-view="prompts">Prompts</a>
     <a class="nav-item nav-help" href="/static/help.html" target="_blank">Help &#8599;</a>
   </nav>
 
-  <!-- ── Page content ── -->
-  <main class="main">
+  <!-- ══════════════════════════════════════════════════════════════════════════
+       WORKSPACE VIEW — two-pane split (left: form + actions, right: preview)
+  ══════════════════════════════════════════════════════════════════════════════ -->
+  <div id="view-workspace" class="work-area">
 
-    <!-- ════════════════════════════════════════════════════════════════════ -->
-    <!-- QA & Publish panel                                                  -->
-    <!-- ════════════════════════════════════════════════════════════════════ -->
-    <div id="panel-publish">
+    <!-- ── LEFT PANE ── -->
+    <div class="left-pane">
 
-      <!-- Load paper -->
-      <div class="panel">
-        <div class="panel-header">Load paper</div>
-        <div class="panel-body">
-          <div class="paper-select-row">
-            <input type="text" id="pub-slug" placeholder="paper-slug (e.g. my-great-idea)">
-            <button class="btn btn-secondary" onclick="loadPaper()">Load</button>
-          </div>
-          <div id="load-msg"></div>
-        </div>
+      <!-- Paper list — always visible at the top -->
+      <div class="paper-list-section">
+        <div class="section-header">Papers</div>
+        <ul class="paper-list" id="paper-list">
+          <li class="list-loading">Loading...</li>
+        </ul>
       </div>
 
-      <!-- Everything below is hidden until a paper is loaded -->
-      <div id="publish-form" class="hidden">
+      <!-- Paper form and actions — hidden until a paper is selected -->
+      <div id="paper-form" class="hidden">
 
-        <!-- Author strip — read-only, sourced from env vars -->
-        <div class="author-strip" id="author-strip">
+        <!-- Author (read-only, from env vars) -->
+        <div class="author-strip">
           <span class="author-label">Author</span>
           <span id="author-display"></span>
         </div>
 
-        <!-- Paper details -->
-        <div class="panel">
-          <div class="panel-header">Paper</div>
-          <div class="panel-body">
-            <div class="form-row"><label>Title</label><input type="text" id="m-title"></div>
-            <div class="form-row"><label>Subtitle</label><input type="text" id="m-subtitle" placeholder="One-sentence summary"></div>
-            <hr class="divider">
-            <div class="form-row">
-              <label>Gate</label>
-              <select id="m-gate" onchange="updateVersion()">
-                <option value="alpha">Alpha — title and stubs only</option>
-                <option value="exploratory">Exploratory — real content, unfinished</option>
-                <option value="draft">Draft — structured and substantive</option>
-                <option value="review">Review — complete, ready for final QA</option>
-                <option value="published">Published — packaged and live</option>
+        <div class="paper-form-section">
+
+          <!-- Paper identity -->
+          <div class="form-group">
+            <label class="form-label">Title</label>
+            <input type="text" id="m-title">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Subtitle</label>
+            <input type="text" id="m-subtitle" placeholder="One-sentence summary">
+          </div>
+
+          <hr class="divider">
+
+          <!-- Gate and version -->
+          <div class="form-row-2">
+            <div class="form-group">
+              <label class="form-label">Gate</label>
+              <select id="m-gate" onchange="onGateChange()">
+                <option value="alpha">Alpha</option>
+                <option value="exploratory">Exploratory</option>
+                <option value="draft">Draft</option>
+                <option value="review">Review</option>
+                <option value="published">Published</option>
               </select>
             </div>
-            <div class="form-row">
-              <label>Version</label>
+            <div class="form-group">
+              <label class="form-label">Version</label>
               <input type="text" id="m-version" placeholder="v0.1-exploratory">
             </div>
-            <hr class="divider">
-            <div class="form-row">
-              <label>Template</label>
-              <select id="m-template"><option>loading...</option></select>
+          </div>
+
+          <!-- Template and license -->
+          <div class="form-row-2">
+            <div class="form-group">
+              <label class="form-label">Template</label>
+              <select id="m-template" onchange="onTemplateChange()">
+                <option>loading...</option>
+              </select>
             </div>
-            <div class="form-row">
-              <label>License</label>
+            <div class="form-group">
+              <label class="form-label">License</label>
               <select id="m-license"><option>loading...</option></select>
             </div>
           </div>
+
+          <hr class="divider">
+
+          <!-- QA checklist -->
+          <div class="form-section-title">QA Checklist</div>
+          <ul class="checklist">
+            <li>
+              <input type="checkbox" id="chk-content">
+              <div class="check-label">
+                <div>Content reviewed</div>
+                <div class="check-note">Paper reads correctly, no gaps</div>
+              </div>
+            </li>
+            <li>
+              <input type="checkbox" id="chk-prior-art">
+              <div class="check-label">
+                <div>Prior art searched</div>
+                <div class="check-note">Findings logged in Notes below</div>
+              </div>
+            </li>
+            <li>
+              <input type="checkbox" id="chk-placeholders">
+              <div class="check-label">
+                <div>Placeholders resolved</div>
+                <div class="check-note">Review / Published gates require zero</div>
+              </div>
+            </li>
+            <li>
+              <input type="checkbox" id="chk-license">
+              <div class="check-label">
+                <div>License confirmed</div>
+                <div class="check-note">Correct for this work</div>
+              </div>
+            </li>
+            <li>
+              <input type="checkbox" id="chk-refs">
+              <div class="check-label">
+                <div>References complete</div>
+                <div class="check-note">All citations present and consistent</div>
+              </div>
+            </li>
+          </ul>
+
+          <hr class="divider">
+
+          <!-- AI usage disclosure -->
+          <div class="form-section-title">AI Usage Disclosure</div>
+          <div class="ai-checks" style="margin-bottom:10px">
+            <label class="ai-check-item">
+              <input type="checkbox" id="m-ai-ideation">
+              Ideation
+            </label>
+            <label class="ai-check-item">
+              <input type="checkbox" id="m-ai-writing">
+              Writing
+            </label>
+            <label class="ai-check-item">
+              <input type="checkbox" id="m-ai-research">
+              Research
+            </label>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tool / model</label>
+            <input type="text" id="m-ai-tool" placeholder="e.g. claude-sonnet-4-6">
+          </div>
+
+          <hr class="divider">
+
+          <!-- Notes -->
+          <div class="form-section-title">Notes</div>
+          <div class="form-group">
+            <label class="form-label">Prior art</label>
+            <textarea id="m-prior-art" placeholder="Queries run and findings..."></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">GitHub repo</label>
+            <input type="text" id="m-github-repo" placeholder="auto-filled on publish">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Zenodo DOI</label>
+            <input type="text" id="m-zenodo-doi" placeholder="auto-filled on Zenodo upload">
+          </div>
+
+        </div><!-- end paper-form-section -->
+
+        <!-- ── Action buttons (below form, above footer) ── -->
+        <div class="actions-section">
+
+          <button class="btn btn-primary" onclick="generatePreview()">
+            <span class="btn-icon">&#9654;</span> Generate Preview
+          </button>
+
+          <button class="btn btn-private" onclick="snapshotPaper()">
+            <span class="btn-icon">&#128274;</span> Snapshot
+          </button>
+
+          <button class="btn btn-public" onclick="releasePaper()">
+            <span class="btn-icon">&#127758;</span> Release
+          </button>
+
+          <button class="btn btn-disabled" disabled title="Zenodo integration coming soon">
+            <span class="btn-icon">&#128218;</span> Zenodo
+          </button>
+
+          <div class="action-msg" id="action-msg"></div>
         </div>
 
-        <!-- QA checklist -->
-        <div class="panel">
-          <div class="panel-header">QA checklist</div>
-          <div class="panel-body">
-            <ul class="checklist">
-              <li>
-                <input type="checkbox" id="chk-content">
-                <div class="check-label">
-                  <div>Content reviewed</div>
-                  <div class="check-note">Paper reads correctly, no unintended gaps</div>
-                </div>
-              </li>
-              <li>
-                <input type="checkbox" id="chk-prior-art">
-                <div class="check-label">
-                  <div>Prior art searched</div>
-                  <div class="check-note">Searched for existing work — findings logged in Notes below</div>
-                </div>
-              </li>
-              <li>
-                <input type="checkbox" id="chk-placeholders">
-                <div class="check-label">
-                  <div>Placeholders resolved (or gate allows them)</div>
-                  <div class="check-note">Review and Published gates require zero placeholders</div>
-                </div>
-              </li>
-              <li>
-                <input type="checkbox" id="chk-license">
-                <div class="check-label">
-                  <div>License confirmed</div>
-                  <div class="check-note">License is correct for this work</div>
-                </div>
-              </li>
-              <li>
-                <input type="checkbox" id="chk-refs">
-                <div class="check-label">
-                  <div>References complete</div>
-                  <div class="check-note">All citations present and formatted consistently</div>
-                </div>
-              </li>
-            </ul>
-          </div>
-        </div>
+      </div><!-- end #paper-form -->
 
-        <!-- AI usage disclosure -->
-        <div class="panel">
-          <div class="panel-header">AI usage disclosure</div>
-          <div class="panel-body">
-            <p class="field-note" style="margin-bottom:14px">Tick every type of AI assistance used in producing this paper.</p>
-            <div class="ai-checks">
-              <label class="ai-check-item">
-                <input type="checkbox" id="m-ai-ideation">
-                <span class="ai-check-label">
-                  <strong>Ideation</strong>
-                  <span>AI helped generate or develop the core idea</span>
-                </span>
-              </label>
-              <label class="ai-check-item">
-                <input type="checkbox" id="m-ai-writing">
-                <span class="ai-check-label">
-                  <strong>Writing</strong>
-                  <span>AI drafted or rewrote sections of text</span>
-                </span>
-              </label>
-              <label class="ai-check-item">
-                <input type="checkbox" id="m-ai-research">
-                <span class="ai-check-label">
-                  <strong>Research</strong>
-                  <span>AI was used to find or summarise sources</span>
-                </span>
-              </label>
-            </div>
-            <div class="form-row" style="margin-top:14px">
-              <label>Tool / model used</label>
-              <input type="text" id="m-ai-tool" placeholder="e.g. claude-sonnet-4-6">
-            </div>
-          </div>
-        </div>
+    </div><!-- end .left-pane -->
 
-        <!-- Notes -->
-        <div class="panel">
-          <div class="panel-header">Notes</div>
-          <div class="panel-body">
-            <div class="form-row">
-              <label>Prior art</label>
-              <textarea id="m-prior-art" placeholder="Queries run and findings..."></textarea>
-            </div>
-            <div class="form-row">
-              <label>GitHub repo</label>
-              <input type="text" id="m-github-repo" placeholder="populated on first publish">
-            </div>
-            <div class="form-row">
-              <label>Zenodo DOI</label>
-              <input type="text" id="m-zenodo-doi" placeholder="populated after Zenodo upload">
-            </div>
-          </div>
-        </div>
+    <!-- ── RIGHT PANE ── -->
+    <div class="right-pane">
 
-        <!-- PDF preview iframe -->
-        <div class="panel hidden" id="pdf-panel">
-          <div class="panel-header">PDF preview</div>
-          <div class="panel-body">
-            <iframe id="pdf-frame" class="pdf-frame" src=""></iframe>
-          </div>
-        </div>
-
-      </div><!-- end #publish-form -->
-    </div><!-- end #panel-publish -->
-
-
-    <!-- ════════════════════════════════════════════════════════════════════ -->
-    <!-- New paper prompt panel                                              -->
-    <!-- ════════════════════════════════════════════════════════════════════ -->
-    <div id="panel-new-paper" class="hidden">
-      <div class="panel">
-        <div class="panel-header">Generate AI prompt</div>
-        <div class="panel-body">
-          <p class="field-note" style="margin-bottom:16px">
-            Generate a prompt to paste into Claude, OpenWebUI, or any AI.
-            The AI produces a structured markdown paper with
-            <code>[PLACEHOLDER: ...]</code> markers for anything incomplete.
-            Drop the output into <code>{slug}/publish/{slug}.md</code> in ideas-workbench.
-          </p>
-          <div class="form-row">
-            <label>Slug</label>
-            <input type="text" id="np-slug" placeholder="my-paper-idea">
-          </div>
-          <div class="form-row">
-            <label>Template</label>
-            <select id="np-template"><option>loading...</option></select>
-          </div>
-          <div class="btn-row">
-            <button class="btn btn-primary" onclick="generatePrompt()">Generate prompt</button>
-          </div>
-        </div>
+      <div class="preview-header">
+        <span class="preview-header-title" id="preview-template-label">Preview</span>
+        <button class="preview-download-btn" id="download-btn" disabled onclick="downloadPDF()">
+          &#8595; Download PDF
+        </button>
       </div>
 
-      <div class="panel hidden" id="prompt-panel">
-        <div class="panel-header">Copy and paste into your AI session</div>
-        <div class="panel-body">
-          <div class="prompt-box" id="prompt-output"></div>
-          <div class="btn-row">
-            <button class="btn btn-primary" onclick="copyPrompt()">Copy to clipboard</button>
-          </div>
-          <div id="copy-msg"></div>
-        </div>
+      <!-- Shown before any preview is generated -->
+      <div class="preview-placeholder" id="preview-placeholder">
+        Select a paper from the list,<br>
+        then click <strong>Generate Preview</strong>.
       </div>
-    </div><!-- end #panel-new-paper -->
+
+      <!-- Pandoc HTML output injected here -->
+      <div class="preview-content hidden" id="preview-content"></div>
+
+    </div><!-- end .right-pane -->
+
+  </div><!-- end #view-workspace -->
 
 
-    <!-- ════════════════════════════════════════════════════════════════════ -->
-    <!-- Papers list panel                                                   -->
-    <!-- ════════════════════════════════════════════════════════════════════ -->
-    <div id="panel-papers" class="hidden">
-      <div class="panel">
-        <div class="panel-header">Papers</div>
-        <div class="panel-body">
-          <div id="papers-list" class="loading">Loading...</div>
-        </div>
-      </div>
-    </div><!-- end #panel-papers -->
-
-  </main>
-
-  <!-- ── Action bar — fixed to bottom, visible once a paper is loaded ── -->
-  <div class="action-bar hidden" id="action-bar">
-    <div class="action-bar-inner">
-      <button class="btn btn-secondary" onclick="previewPDF()">Preview PDF</button>
-      <button class="btn btn-secondary" onclick="downloadPDF()">Download PDF</button>
-      <button class="btn btn-secondary" onclick="savePaper()">Save metadata</button>
-      <button class="btn btn-success" onclick="publishPaper()">Publish &#8594; GitHub</button>
-      <div id="action-msg" class="action-msg"></div>
+  <!-- ══════════════════════════════════════════════════════════════════════════
+       PROMPTS VIEW — full-width card grid from zz-pressroom/prompts/
+  ══════════════════════════════════════════════════════════════════════════════ -->
+  <div id="view-prompts" class="prompts-panel hidden">
+    <div class="prompts-grid" id="prompts-grid">
+      <div class="list-loading">Loading prompts...</div>
     </div>
   </div>
 

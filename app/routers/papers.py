@@ -18,6 +18,8 @@
 # only the frontmatter metadata is managed here.  Body edits happen in Obsidian.
 # ─────────────────────────────────────────────────────────────────────────────
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from auth import check_auth
@@ -34,21 +36,51 @@ router = APIRouter()
 _CONFIG_FOLDER = "zz-pressroom"
 
 
+async def _get_paper_meta(slug: str) -> dict:
+    """
+    Fetch a paper's title, gate, and version from its frontmatter.
+
+    Makes one GitHub API call per paper.  Called in parallel via asyncio.gather
+    so the full list loads in roughly the time of a single request.
+
+    Returns safe defaults if the file doesn't exist or has no frontmatter,
+    so the paper still appears in the list even if it's brand new.
+    """
+    text = await gh_get_text(IDEAS_WORKBENCH_REPO, f"{slug}/publish/{slug}.md")
+    if not text:
+        return {"slug": slug, "title": slug, "gate": "", "version": "unpublished"}
+    fm, _ = parse_frontmatter(text)
+    return {
+        "slug":    slug,
+        "title":   fm.get("title") or slug,
+        "gate":    fm.get("gate", ""),
+        "version": fm.get("version") or "unpublished",
+    }
+
+
 @router.get("/api/papers")
 async def list_papers(_: str = Depends(check_auth)):
     """
-    Return a list of all idea slugs (folder names) from ideas-workbench.
+    Return all papers from ideas-workbench with their gate and version status.
 
-    Excludes hidden folders (starting with .) and the zz-pressroom config folder.
-    Each item in the returned list is a string slug, e.g. "my-great-idea".
+    Fetches the frontmatter of every paper in parallel (one GitHub API call per
+    paper, all running concurrently) so the full list loads quickly.
+
+    Returns a list of objects, e.g.:
+      [{"slug": "my-paper", "title": "My Paper", "gate": "exploratory", "version": "v0.1-exploratory"}, ...]
+
+    Excludes hidden folders and the zz-pressroom config folder.
     """
     items = await gh_list(IDEAS_WORKBENCH_REPO, "")
-    return [
+    slugs = [
         i["name"] for i in items
         if i["type"] == "dir"
         and not i["name"].startswith(".")
         and i["name"] != _CONFIG_FOLDER
     ]
+    # Fetch all frontmatters concurrently rather than one at a time
+    metas = await asyncio.gather(*[_get_paper_meta(s) for s in slugs])
+    return list(metas)
 
 
 @router.get("/api/papers/{slug}")

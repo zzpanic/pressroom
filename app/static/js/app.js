@@ -1,283 +1,237 @@
-// app.js
+// app.js — Pressroom main application logic
 // ─────────────────────────────────────────────────────────────────────────────
-// Main application logic for Pressroom.
-//
-// This file depends on api.js (the fetch wrapper) and ui.js (DOM helpers),
-// both of which must be loaded before this file in index.html.
-//
-// Structure:
-//   - Global state variables
-//   - Startup (init, loadSelects, setupNav)
-//   - New paper prompt panel
-//   - QA & Publish panel (load paper, populate form, save, preview, publish)
-//   - Papers list panel
+// Depends on api.js (fetch wrapper) and ui.js (DOM helpers), loaded first.
 // ─────────────────────────────────────────────────────────────────────────────
 
 
 // ── Global state ──────────────────────────────────────────────────────────────
-// These variables are shared across functions in this file.
 
-// Config loaded from /api/config on startup (author details, repo names)
-let config = {};
-
-// The slug of the currently loaded paper (e.g. "my-great-idea")
-let currentSlug = null;
-
-// The full frontmatter of the currently loaded paper
-// Used to preserve fields not shown in the UI (e.g. zenodo_doi if not editable)
-let currentFrontmatter = {};
+let config          = {};   // from /api/config — author details, repo names
+let currentSlug     = null; // slug of the selected paper
+let currentFrontmatter = {}; // frontmatter loaded from GitHub for this paper
+let pdfReady        = false; // true once a PDF has been generated for currentSlug
 
 
-// ── Startup ───────────────────────────────────────────────────────────────────
+// ── Boot ──────────────────────────────────────────────────────────────────────
 
-/**
- * Called once when the page loads.
- * Fetches config from the server and sets up the UI.
- */
 async function init() {
-  // Load author details and repo names from the server
-  config = await api('/api/config');
+  // Load config (triggers bootstrap of zz-pressroom/ on first run)
+  try {
+    config = await api('/api/config');
+    document.getElementById('repo-label').textContent = config.github_repo;
+  } catch (e) {
+    document.getElementById('repo-label').textContent = 'error loading config';
+  }
 
-  // Show the repo name in the header bar
-  document.getElementById('repo-label').textContent = config.github_repo;
-
-  // Populate the template and license dropdown selects
+  // Load template and license dropdowns
   await loadSelects();
 
-  // Wire up the sidebar navigation clicks
+  // Load the paper list
+  await loadPapersList();
+
+  // Wire up top navigation
   setupNav();
 }
 
-/**
- * Fetch the list of templates and licenses and populate the dropdown selects.
- * Runs two API calls in parallel for speed.
- */
-async function loadSelects() {
-  const [templates, licenses] = await Promise.all([
-    api('/api/templates'),
-    api('/api/licenses'),
-  ]);
-  // Populate both the new-paper panel and the publish panel template selects
-  populateSelect('np-template', templates);
-  populateSelect('m-template', templates);
-  populateSelect('m-license', licenses);
-}
+init();
 
-/**
- * Set up click handlers on the sidebar navigation items.
- * Clicking an item shows its panel and hides all others.
- */
+
+// ── Navigation ────────────────────────────────────────────────────────────────
+
 function setupNav() {
-  document.querySelectorAll('.nav-item[data-panel]').forEach(item => {
+  // The two views are Workspace and Prompts.
+  // Clicking a nav item shows its view and hides the other.
+  document.querySelectorAll('.nav-item[data-view]').forEach(item => {
     item.addEventListener('click', () => {
+      const view = item.dataset.view;
+
+      // Update active tab
       document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
       item.classList.add('active');
 
-      // Hide all panels, then show the one matching the clicked item
-      const panelId = item.dataset.panel;
-      document.querySelectorAll('[id^="panel-"]').forEach(p => p.classList.add('hidden'));
-      document.getElementById(`panel-${panelId}`).classList.remove('hidden');
+      // Show the selected view, hide the other
+      document.getElementById('view-workspace').classList.toggle('hidden', view !== 'workspace');
+      document.getElementById('view-prompts').classList.toggle('hidden', view !== 'prompts');
 
-      // The papers list loads its content on demand when the panel opens
-      if (panelId === 'papers') loadPapersList();
+      // Load prompts on first open
+      if (view === 'prompts') loadPrompts();
     });
   });
 }
 
 
-// ── New paper prompt ──────────────────────────────────────────────────────────
+// ── Selects (templates and licenses) ─────────────────────────────────────────
 
-/**
- * Generate an AI prompt based on the selected template.
- * The prompt tells the AI to write a structured paper using [PLACEHOLDER: ...]
- * markers for anything incomplete.
- */
-async function generatePrompt() {
-  const slug     = document.getElementById('np-slug').value.trim();
-  const template = document.getElementById('np-template').value;
-
-  if (!slug) { alert('Enter a slug first'); return; }
-
-  // Fetch the template content and its section headers from the server
-  const tmpl = await api(`/api/templates/${template}`);
-
-  // Format the section headers as an indented list for the prompt
-  const headers = tmpl.headers
-    .filter(h => !h.startsWith('!') && h.length > 0)
-    .map(h => `  ${h}`)
-    .join('\n');
-
-  // Build the prompt text that will be pasted into Claude or another AI
-  const prompt =
-`Based on our discussion, produce a paper using the structure below.
-
-Rules:
-- Output clean markdown only — no commentary, no preamble
-- Use [PLACEHOLDER: description] for ANYTHING incomplete, uncertain, or undecided
-- Use [PLACEHOLDER: prior art search needed — topic] where prior art should be checked
-- Use [PLACEHOLDER: reference needed — source] for any citations not yet confirmed
-- Match the exact section headers below
-- Include a References section with all sources discussed
-
-Slug     : ${slug}
-Template : ${template}
-
-Template structure:
-${headers}
-
-Begin the paper now.`;
-
-  // Show the prompt in the output box
-  document.getElementById('prompt-output').textContent = prompt;
-  document.getElementById('prompt-panel').classList.remove('hidden');
-}
-
-/**
- * Copy the generated prompt text to the clipboard.
- */
-function copyPrompt() {
-  const text = document.getElementById('prompt-output').textContent;
-  navigator.clipboard.writeText(text).then(() => {
-    setMsg('copy-msg', 'Copied to clipboard', 'ok');
-    // Clear the message after 2 seconds
-    setTimeout(() => document.getElementById('copy-msg').innerHTML = '', 2000);
-  });
+async function loadSelects() {
+  // Fetch templates and licenses in parallel for speed
+  const [templates, licenses] = await Promise.all([
+    api('/api/templates').catch(() => []),
+    api('/api/licenses').catch(() => []),
+  ]);
+  populateSelect('m-template', templates);
+  populateSelect('m-license', licenses);
 }
 
 
-// ── Load paper ────────────────────────────────────────────────────────────────
+// ── Paper list ────────────────────────────────────────────────────────────────
 
-/**
- * Load a paper by slug from the server.
- * Reads the slug from the input field, fetches the paper's frontmatter,
- * and populates the metadata form.
- */
-async function loadPaper() {
-  const slug = document.getElementById('pub-slug').value.trim();
-  if (!slug) { alert('Enter a paper slug'); return; }
+async function loadPapersList() {
+  // /api/papers now returns [{slug, title, gate, version}] with frontmatter metadata
+  const list = document.getElementById('paper-list');
+  list.innerHTML = '<li class="list-loading">Loading...</li>';
 
-  setMsg('load-msg', 'Loading...', 'info');
+  let papers;
   try {
-    // GET /api/papers/{slug} returns { slug, frontmatter, paper_exists }
-    const data = await api(`/api/papers/${slug}`);
-
-    currentSlug        = slug;
-    currentFrontmatter = data.frontmatter || {};
-
-    // Fill the form fields with the paper's frontmatter values
-    populatePublishForm(data);
-
-    // Show author strip
-    const authorDisplay = document.getElementById('author-display');
-    if (authorDisplay) {
-      authorDisplay.textContent = [config.author_name, config.author_email, config.author_github]
-        .filter(Boolean).join('  ·  ');
-    }
-
-    // Show the rest of the form and the bottom action bar
-    document.getElementById('publish-form').classList.remove('hidden');
-    document.getElementById('action-bar').classList.remove('hidden');
-
-    if (!data.paper_exists) {
-      setMsg('load-msg', `Warning: ${slug}/publish/${slug}.md not found. Add the file before previewing.`, 'warn');
-    } else {
-      setMsg('load-msg', `Loaded: ${slug}`, 'ok');
-    }
+    papers = await api('/api/papers');
   } catch (e) {
-    setMsg('load-msg', `Error: ${e.message}`, 'err');
+    list.innerHTML = `<li class="list-empty">Error loading papers: ${e.message}</li>`;
+    return;
+  }
+
+  if (!papers.length) {
+    list.innerHTML = '<li class="list-empty">No papers found in ideas-workbench.</li>';
+    return;
+  }
+
+  // Sort alphabetically by slug
+  papers.sort((a, b) => a.slug.localeCompare(b.slug));
+
+  list.innerHTML = papers.map(p => `
+    <li class="paper-row" data-slug="${p.slug}" onclick="selectPaper('${p.slug}')">
+      <div style="flex:1;min-width:0">
+        <div class="paper-row-name">${p.slug}</div>
+        ${p.title && p.title !== p.slug
+          ? `<div class="paper-row-title">${escapeHtml(p.title)}</div>`
+          : ''}
+      </div>
+      <span class="gate-badge ${gateBadgeClass(p.gate, p.version)}">${badgeLabel(p.gate, p.version)}</span>
+    </li>
+  `).join('');
+}
+
+function gateBadgeClass(gate, version) {
+  // Pick a colour class based on the gate, or unpublished if no version yet
+  if (!gate && (!version || version === 'unpublished')) return 'badge-unpublished';
+  const map = {
+    alpha: 'badge-alpha',
+    exploratory: 'badge-exploratory',
+    draft: 'badge-draft',
+    review: 'badge-review',
+    published: 'badge-published',
+  };
+  return map[gate] || 'badge-unpublished';
+}
+
+function badgeLabel(gate, version) {
+  // Show the version string, or the gate name if version is missing, or "unpublished"
+  if (version && version !== 'unpublished') return version;
+  if (gate) return gate;
+  return 'unpublished';
+}
+
+function escapeHtml(str) {
+  // Prevent XSS when injecting paper titles into innerHTML
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+
+// ── Select a paper ────────────────────────────────────────────────────────────
+
+async function selectPaper(slug) {
+  // Highlight the clicked row
+  document.querySelectorAll('.paper-row').forEach(r => r.classList.remove('active'));
+  const row = document.querySelector(`.paper-row[data-slug="${slug}"]`);
+  if (row) row.classList.add('active');
+
+  // Reset state
+  currentSlug = slug;
+  pdfReady    = false;
+  document.getElementById('download-btn').disabled = true;
+  clearPreview();
+  setActionMsg('Loading...', 'info');
+
+  try {
+    const data = await api(`/api/papers/${slug}`);
+    currentFrontmatter = data.frontmatter || {};
+    populateForm(data.frontmatter || {});
+    showForm();
+    setActionMsg('', '');
+  } catch (e) {
+    setActionMsg(`Error loading paper: ${e.message}`, 'err');
   }
 }
 
-/**
- * Populate all the metadata form fields from a paper's frontmatter.
- *
- * The frontmatter may have a nested 'author' object {name, email, github}
- * or may be missing fields entirely — we fall back to the config defaults
- * (from author.yaml) so the form is never blank on a new paper.
- *
- * @param {object} data - the response from GET /api/papers/{slug}
- */
-function populatePublishForm(data) {
-  const fm = data.frontmatter;
+function showForm() {
+  // Reveal the paper form and author strip below the paper list
+  document.getElementById('paper-form').classList.remove('hidden');
 
-  // Paper identity
+  // Show the author details
+  const display = document.getElementById('author-display');
+  if (display) {
+    display.textContent = [config.author_name, config.author_email, config.author_github]
+      .filter(Boolean).join('  ·  ');
+  }
+}
+
+function clearPreview() {
+  // Reset the right pane to its blank state
+  document.getElementById('preview-placeholder').classList.remove('hidden');
+  document.getElementById('preview-content').classList.add('hidden');
+  document.getElementById('preview-content').innerHTML = '';
+  document.getElementById('preview-template-label').textContent = 'Preview';
+}
+
+function populateForm(fm) {
+  // Fill every form field from the paper's frontmatter
   setValue('m-title',    fm.title    || '');
   setValue('m-subtitle', fm.subtitle || '');
-
-  // Gate and version
-  setValue('m-gate',    fm.gate    || 'exploratory');
-  setValue('m-version', fm.version || gateToVersion(fm.gate || 'exploratory'));
-
-  // Template and license
+  setValue('m-gate',     fm.gate     || 'exploratory');
+  setValue('m-version',  fm.version  || gateToVersion(fm.gate || 'exploratory'));
   setValue('m-template', fm.template || 'whitepaper');
   setValue('m-license',  fm.license  || 'CC BY 4.0');
 
-  // AI disclosure — stored under ai_assisted in the spec schema
   const ai = fm.ai_assisted || {};
-  setChecked('m-ai-ideation', ai.ideation || false);
-  setChecked('m-ai-writing',  ai.writing  || false);
-  setChecked('m-ai-research', ai.research || false);
-  // ai_tool is an extra field Pressroom adds (not in spec but useful)
+  setChecked('m-ai-ideation', !!ai.ideation);
+  setChecked('m-ai-writing',  !!ai.writing);
+  setChecked('m-ai-research', !!ai.research);
   setValue('m-ai-tool', fm.ai_tool || '');
 
-  // Prior art and publication links
   setValue('m-prior-art',   fm.prior_art_disclosure || '');
   setValue('m-github-repo', fm.github_repo          || '');
   setValue('m-zenodo-doi',  fm.zenodo_doi            || '');
 
   const chk = fm.checklist || {};
-  setChecked('chk-content',      chk.content_reviewed      || false);
-  setChecked('chk-prior-art',    chk.prior_art_searched    || false);
-  setChecked('chk-placeholders', chk.placeholders_resolved || false);
-  setChecked('chk-license',      chk.license_confirmed     || false);
-  setChecked('chk-refs',         chk.references_complete   || false);
+  setChecked('chk-content',      !!chk.content_reviewed);
+  setChecked('chk-prior-art',    !!chk.prior_art_searched);
+  setChecked('chk-placeholders', !!chk.placeholders_resolved);
+  setChecked('chk-license',      !!chk.license_confirmed);
+  setChecked('chk-refs',         !!chk.references_complete);
 }
 
-/**
- * Read all the form fields and build the frontmatter object to send to the server.
- *
- * This is the reverse of populatePublishForm.
- * The server (routers/papers.py) will auto-fill derived fields like status,
- * license_url, and date before writing back to GitHub.
- *
- * @returns {object} frontmatter fields ready to POST to /api/papers/{slug}/save
- */
 function buildFrontmatter() {
+  // Read all form fields and return a frontmatter dict ready to send to the server
   return {
-    // Paper identity
     title:    val('m-title'),
     subtitle: val('m-subtitle'),
     slug:     currentSlug,
-
-    // Author always comes from config (env vars) in single-user mode
     author: {
       name:   config.author_name,
       email:  config.author_email,
       github: config.author_github,
     },
-
-    // Gate and version
-    gate:    val('m-gate'),
-    version: val('m-version'),
-
-    // Template and license
+    gate:     val('m-gate'),
+    version:  val('m-version'),
     template: val('m-template'),
     license:  val('m-license'),
-
-    // AI disclosure (spec field name: ai_assisted)
     ai_assisted: {
       ideation: checked('m-ai-ideation'),
       writing:  checked('m-ai-writing'),
       research: checked('m-ai-research'),
     },
-    // Extra field — the specific tool used (not in spec but useful to record)
-    ai_tool: val('m-ai-tool'),
-
-    // Prior art and publication links (spec field names)
+    ai_tool:              val('m-ai-tool'),
     prior_art_disclosure: val('m-prior-art'),
     github_repo:          val('m-github-repo'),
     zenodo_doi:           val('m-zenodo-doi'),
-
     checklist: {
       content_reviewed:      checked('chk-content'),
       prior_art_searched:    checked('chk-prior-art'),
@@ -288,206 +242,285 @@ function buildFrontmatter() {
   };
 }
 
-/**
- * When the gate dropdown changes, automatically update the version field
- * to the canonical version string for that gate (e.g. "draft" → "v0.2-draft").
- * The user can still manually override the version after this.
- */
-function updateVersion() {
+function onGateChange() {
+  // When gate changes, auto-fill the version field
   setValue('m-version', gateToVersion(val('m-gate')));
 }
 
+function onTemplateChange() {
+  // When template changes, re-render the HTML preview if one exists
+  const content = document.getElementById('preview-content');
+  if (!content.classList.contains('hidden')) {
+    // Preview already showing — re-render with new template CSS
+    const template = val('m-template');
+    content.className = `preview-content preview-${template}`;
+    document.getElementById('preview-template-label').textContent = `Preview — ${template}`;
+  }
+}
 
-// ── Actions ───────────────────────────────────────────────────────────────────
 
-/**
- * Save the current form state back to {slug}/publish/{slug}.md on GitHub.
- * This updates the frontmatter metadata without touching the paper body.
- */
+// ── Save (internal, called before generate/snapshot/release) ─────────────────
+
 async function savePaper() {
-  setMsg('action-msg', 'Saving metadata...', 'info');
+  // Writes the current form state back to {slug}/publish/{slug}.md on GitHub.
+  // Returns true on success, false on failure.
   try {
     await api(`/api/papers/${currentSlug}/save`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(buildFrontmatter()),
     });
-    setMsg('action-msg', 'Metadata saved to GitHub', 'ok');
     return true;
   } catch (e) {
-    setMsg('action-msg', `Save failed: ${e.message}`, 'err');
+    setActionMsg(`Save failed: ${e.message}`, 'err');
     return false;
   }
 }
 
-/**
- * Generate a PDF for the current paper and show it in the browser.
- *
- * This runs the full preview workflow (spec §7.4 steps 1–4):
- *   1. Fetches {slug}.md from GitHub
- *   2. Generates the PDF via Pandoc
- *   3. Pushes the review copy back to {slug}/publish/{slug}.pdf on GitHub
- *   4. Displays the PDF in the iframe below the actions panel
- *
- * This can take 20–30 seconds depending on paper length.
- */
-async function previewPDF() {
-  setMsg('action-msg', 'Saving metadata then generating PDF — this may take 20–30 seconds...', 'info');
+
+// ── Generate Preview ──────────────────────────────────────────────────────────
+
+async function generatePreview() {
+  if (!currentSlug) return;
+
+  setActionMsg('Saving and generating preview...', 'info');
+
+  // Always save the form state first so preview and file are in sync
   const saved = await savePaper();
   if (!saved) return;
+
+  // ── Step 1: HTML preview (fast, ~1s, no LaTeX) ────────────────────────────
   try {
-    // POST the current form frontmatter so the PDF reflects what the user has
-    // typed, not whatever is (or isn't) saved in the GitHub file yet.
+    const result = await api(`/api/preview/html/${currentSlug}`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ frontmatter: buildFrontmatter() }),
+    });
+
+    const template = val('m-template');
+    const content  = document.getElementById('preview-content');
+
+    // DOMPurify sanitises the Pandoc HTML before injecting into the page
+    content.innerHTML = DOMPurify.sanitize(result.html);
+    content.className = `preview-content preview-${template}`;
+    document.getElementById('preview-placeholder').classList.add('hidden');
+    content.classList.remove('hidden');
+    document.getElementById('preview-template-label').textContent = `Preview — ${template}`;
+
+    setActionMsg('Preview generated. Generating PDF in background...', 'info');
+  } catch (e) {
+    setActionMsg(`Preview failed: ${e.message}`, 'err');
+    return;
+  }
+
+  // ── Step 2: PDF (slow, ~20-30s, runs in background) ──────────────────────
+  // We fire this off without awaiting so the user can see the HTML preview
+  // immediately.  The download button enables when the PDF is ready.
+  generatePDFBackground();
+}
+
+async function generatePDFBackground() {
+  try {
     const r = await fetch(`/api/preview/${currentSlug}`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ frontmatter: buildFrontmatter() }),
     });
+
     if (!r.ok) {
       const err = await r.text();
-      setMsg('action-msg', `PDF generation failed: ${err}`, 'err');
+      setActionMsg(`PDF failed: ${err}`, 'warn');
       return;
     }
 
-    // Create a temporary browser URL for the PDF blob and load it in the iframe
-    const blob = await r.blob();
-    const url  = URL.createObjectURL(blob);
-    document.getElementById('pdf-frame').src = url;
-    document.getElementById('pdf-panel').classList.remove('hidden');
+    // PDF is ready — enable the download button
+    pdfReady = true;
+    document.getElementById('download-btn').disabled = false;
 
-    // Surface any pre-flight warnings returned in response headers
-    const warnings = JSON.parse(r.headers.get('X-Pressroom-Warnings') || '[]');
+    // Surface any pre-flight warnings from the PDF generation
+    const warnings     = JSON.parse(r.headers.get('X-Pressroom-Warnings') || '[]');
     const placeholders = parseInt(r.headers.get('X-Pressroom-Placeholder-Count') || '0');
 
     if (warnings.length) {
-      const warnText = warnings.join(' | ');
-      setMsg('action-msg', `PDF generated ⚠ ${warnText}`, 'warn');
+      setActionMsg(`Preview ready ⚠ ${warnings.join(' | ')}`, 'warn');
     } else if (placeholders > 0) {
-      setMsg('action-msg', `PDF generated — ${placeholders} placeholder(s) remain`, 'warn');
+      setActionMsg(`Preview ready — ${placeholders} placeholder(s) remain`, 'warn');
     } else {
-      setMsg('action-msg', 'PDF generated and saved to GitHub as review copy', 'ok');
+      setActionMsg('Preview ready. PDF saved to GitHub.', 'ok');
     }
   } catch (e) {
-    setMsg('action-msg', `Error: ${e.message}`, 'err');
+    setActionMsg(`PDF generation error: ${e.message}`, 'warn');
   }
 }
 
-/**
- * Trigger a browser download of the last generated PDF.
- * Does not regenerate — use "Preview PDF" first.
- */
-async function downloadPDF() {
-  // Create a temporary <a> tag and click it to trigger the download
-  const a      = document.createElement('a');
-  a.href       = `/api/preview/${currentSlug}/download`;
-  a.download   = `${currentSlug}-preview.pdf`;
+function downloadPDF() {
+  if (!pdfReady || !currentSlug) return;
+  // Use {slug}-{version}.pdf as the download filename so it's identifiable
+  const version = val('m-version') || 'preview';
+  const a       = document.createElement('a');
+  a.href        = `/api/preview/${currentSlug}/download`;
+  a.download    = `${currentSlug}-${version}.pdf`;
   a.click();
 }
 
-/**
- * Publish the current paper to GitHub.
- *
- * Before publishing:
- *   - All checklist items must be ticked
- *   - The user must confirm the version string and gate in a dialog
- *
- * This runs spec §7.4 steps 5–7:
- *   5. Saves the current frontmatter
- *   6. Creates a versioned snapshot in ideas-workbench
- *   7. Mirrors the snapshot to pressroom-pubs
- *
- * Note: "Preview PDF" must have been run first — the publish step reads
- * the review PDF from GitHub, not from the local /tmp folder.
- */
-async function publishPaper() {
-  // Guard: all checklist items must be ticked
-  const allChecked = [
-    'chk-content', 'chk-prior-art',
-    'chk-placeholders', 'chk-license', 'chk-refs',
-  ].every(id => checked(id));
 
-  if (!allChecked) {
-    setMsg('action-msg', 'Complete all checklist items before publishing', 'warn');
-    return;
-  }
+// ── Snapshot (private — ideas-workbench only) ─────────────────────────────────
 
-  // Ask the user to confirm before doing anything irreversible
+async function snapshotPaper() {
+  if (!currentSlug) return;
+
+  setActionMsg('Saving and creating snapshot...', 'info');
+
+  const saved = await savePaper();
+  if (!saved) return;
+
   const version = val('m-version');
   const gate    = val('m-gate');
-  if (!confirm(`Publish "${currentSlug}" as ${version} (${gate})?\n\nThis will create a versioned snapshot in ideas-workbench and push it to pressroom-pubs.`)) {
+
+  if (!confirm(`Create snapshot "${currentSlug}" at ${version}?\n\nThis saves a versioned copy to ideas-workbench (private). It will NOT be public.`)) {
+    setActionMsg('', '');
     return;
   }
 
-  setMsg('action-msg', 'Saving metadata and publishing...', 'info');
   try {
-    // Save the latest form state first so the snapshot includes current metadata
-    await savePaper();
+    const result = await api(`/api/papers/${currentSlug}/snapshot`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ version, gate }),
+    });
+    setActionMsg(result.message, 'ok');
+    // Refresh the paper list so the badge updates
+    await loadPapersList();
+  } catch (e) {
+    setActionMsg(`Snapshot failed: ${e.message}`, 'err');
+  }
+}
 
-    // Trigger the snapshot + mirror
+
+// ── Release (public — pressroom-pubs) ─────────────────────────────────────────
+
+async function releasePaper() {
+  if (!currentSlug) return;
+
+  // All checklist items must be ticked before releasing publicly
+  const allChecked = ['chk-content','chk-prior-art','chk-placeholders','chk-license','chk-refs']
+    .every(id => checked(id));
+
+  if (!allChecked) {
+    setActionMsg('Complete all checklist items before releasing', 'warn');
+    return;
+  }
+
+  const version = val('m-version');
+  const gate    = val('m-gate');
+
+  if (!confirm(`Release "${currentSlug}" as ${version} (${gate})?\n\nThis publishes to pressroom-pubs and makes it publicly visible.`)) {
+    return;
+  }
+
+  setActionMsg('Saving and releasing...', 'info');
+
+  const saved = await savePaper();
+  if (!saved) return;
+
+  try {
     const result = await api(`/api/papers/${currentSlug}/publish`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ version }),
+      body:    JSON.stringify({ version, gate }),
     });
-
-    setMsg('action-msg', result.message, 'ok');
+    setActionMsg(result.message, 'ok');
+    await loadPapersList();
   } catch (e) {
-    setMsg('action-msg', `Error: ${e.message}`, 'err');
+    setActionMsg(`Release failed: ${e.message}`, 'err');
   }
 }
 
 
-// ── Papers list ───────────────────────────────────────────────────────────────
+// ── Action message helper ─────────────────────────────────────────────────────
 
-/**
- * Load and display the list of all papers from ideas-workbench.
- * Called when the Papers panel is opened.
- */
-async function loadPapersList() {
-  const el = document.getElementById('papers-list');
-  el.innerHTML = '<div class="loading">Loading...</div>';
+function setActionMsg(text, type) {
+  const el = document.getElementById('action-msg');
+  if (!el) return;
+  if (!text) { el.innerHTML = ''; return; }
+  el.innerHTML = `<span class="msg-${type}">${text}</span>`;
+}
 
+
+// ── Prompts ───────────────────────────────────────────────────────────────────
+
+let promptsLoaded = false;
+
+async function loadPrompts() {
+  if (promptsLoaded) return; // Only fetch once per session
+
+  const grid = document.getElementById('prompts-grid');
+  grid.innerHTML = '<div class="list-loading">Loading prompts...</div>';
+
+  let prompts;
   try {
-    const papers = await api('/api/papers');
+    prompts = await api('/api/prompts');
+  } catch (e) {
+    grid.innerHTML = `<div class="list-empty">Error loading prompts: ${e.message}</div>`;
+    return;
+  }
 
-    if (!papers.length) {
-      el.innerHTML = '<p style="color:var(--gray);font-size:13px">No papers found in ideas-workbench.</p>';
+  if (!prompts.length) {
+    grid.innerHTML = `
+      <div class="prompts-empty">
+        No prompts found.<br>
+        Add <code>.md</code> files to <code>zz-pressroom/prompts/</code> in your workbench repo.
+      </div>`;
+    return;
+  }
+
+  // Render each prompt as a card with a 4-5 line preview and a copy button.
+  // The full content is stored in a data attribute so Copy works without an API call.
+  grid.innerHTML = prompts.map(p => `
+    <div class="prompt-card">
+      <div class="prompt-card-header">
+        <div class="prompt-card-name">${escapeHtml(p.name)}</div>
+        <button class="prompt-copy-btn" onclick="copyPrompt(this, '${escapeHtml(p.name)}')">
+          &#9112; Copy
+        </button>
+      </div>
+      <div class="prompt-preview">${escapeHtml(p.preview)}</div>
+    </div>
+  `).join('');
+
+  // Store full content on each card for clipboard access
+  prompts.forEach((p, i) => {
+    grid.children[i]._promptContent = p.content;
+  });
+
+  promptsLoaded = true;
+}
+
+async function copyPrompt(btn, name) {
+  // Get the full prompt content — stored on the card element
+  const card    = btn.closest('.prompt-card');
+  let content   = card._promptContent;
+
+  // If content somehow isn't cached, fetch it
+  if (!content) {
+    try {
+      const data = await api(`/api/prompts/${name}`);
+      content = data.content;
+    } catch (e) {
+      btn.textContent = 'Error';
       return;
     }
+  }
 
-    // Render each paper as a row with an Open button
-    el.innerHTML = papers.map(p => `
-      <div style="padding:10px 0;border-bottom:1px solid #eee;display:flex;align-items:center;gap:12px">
-        <span style="font-weight:500">${p}</span>
-        <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px"
-          onclick="openPaper('${p}')">Open</button>
-      </div>
-    `).join('');
+  try {
+    await navigator.clipboard.writeText(content);
+    btn.classList.add('copied');
+    btn.innerHTML = '&#10003; Copied';
+    setTimeout(() => {
+      btn.classList.remove('copied');
+      btn.innerHTML = '&#9112; Copy';
+    }, 1500);
   } catch (e) {
-    el.innerHTML = `<div class="msg msg-err">Error: ${e.message}</div>`;
+    btn.textContent = 'Failed';
   }
 }
-
-/**
- * Open a paper from the Papers list directly into the QA & Publish panel.
- * Switches to the Publish panel and loads the selected paper.
- *
- * @param {string} slug - the paper slug to open
- */
-function openPaper(slug) {
-  document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-  document.querySelector('[data-panel="publish"]').classList.add('active');
-
-  // Show the publish panel, hide all others
-  document.querySelectorAll('[id^="panel-"]').forEach(p => p.classList.add('hidden'));
-  document.getElementById('panel-publish').classList.remove('hidden');
-
-  // Pre-fill the slug input and trigger load
-  document.getElementById('pub-slug').value = slug;
-  loadPaper();
-}
-
-
-// ── Boot ──────────────────────────────────────────────────────────────────────
-// Start the app when the page finishes loading
-init();

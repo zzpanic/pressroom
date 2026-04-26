@@ -13,7 +13,7 @@ from logging_config import get_logger, RequestIDMiddleware
 from exceptions import PressroomException
 import logging as _logging
 import shutil
-from routers import config, papers, preview, publish, templates, auth as auth_router, status as status_router
+from routers import config, papers, preview, publish, templates, prompts, auth as auth_router, status as status_router
 from routers.publish import _limiter
 from database import init_db
 from config import validate_config, validate_api_keys, IDEAS_WORKBENCH_REPO, TEMP_DIR
@@ -87,6 +87,7 @@ app.include_router(papers.router)
 app.include_router(preview.router)
 app.include_router(publish.router)
 app.include_router(templates.router)
+app.include_router(prompts.router)
 
 # Log application startup
 logger.info("Pressroom application started")

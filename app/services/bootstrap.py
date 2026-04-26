@@ -35,6 +35,36 @@ _LOCAL_TEMPLATE_DIR = Path("/app/pandoc")
 _ZZ = "zz-pressroom"
 
 
+# Default prompt stored in zz-pressroom/prompts/new-paper.md on first run.
+# The user can edit this in Obsidian and add more prompts alongside it.
+_DEFAULT_NEW_PAPER_PROMPT = """\
+Based on our discussion, produce a paper using the structure below.
+
+Rules:
+- Output clean markdown only — no commentary, no preamble
+- Use [PLACEHOLDER: description] for ANYTHING incomplete, uncertain, or undecided
+- Use [PLACEHOLDER: prior art search needed — topic] where prior art should be checked
+- Use [PLACEHOLDER: reference needed — source] for any citations not yet confirmed
+- Match the exact section headers below
+- Include a References section with all sources discussed
+
+Slug: [your-slug-here]
+Template: whitepaper
+
+Template structure:
+  Abstract
+  Introduction
+  Background and Related Work
+  Methodology / Approach
+  Results / Findings
+  Discussion
+  Conclusion
+  References
+
+Begin the paper now.
+"""
+
+
 async def bootstrap_if_needed() -> bool:
     """
     Check whether zz-pressroom/ is initialised and create it if not.
@@ -54,6 +84,7 @@ async def bootstrap_if_needed() -> bool:
     await _create_author_yaml()
     await _create_defaults_yaml()
     await _create_bundled_templates()
+    await _create_default_prompt()
 
     return True
 
@@ -107,6 +138,22 @@ async def _create_defaults_yaml() -> None:
         f"{_ZZ}/defaults.yaml",
         content,
         message="pressroom: initialise zz-pressroom/defaults.yaml",
+    )
+
+
+async def _create_default_prompt() -> None:
+    """
+    Create the default new-paper prompt in zz-pressroom/prompts/ if it doesn't exist.
+    """
+    repo_path = f"{_ZZ}/prompts/new-paper.md"
+    existing = await gh_get_text(IDEAS_WORKBENCH_REPO, repo_path)
+    if existing is not None:
+        return
+    await gh_put(
+        IDEAS_WORKBENCH_REPO,
+        repo_path,
+        _DEFAULT_NEW_PAPER_PROMPT,
+        message="pressroom: initialise zz-pressroom/prompts/new-paper.md",
     )
 
 
