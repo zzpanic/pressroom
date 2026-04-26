@@ -6,7 +6,18 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - stack.env
+      - .env
+    environment:
+      - IDEAS_WORKBENCH_GIT_TOKEN=${IDEAS_WORKBENCH_GIT_TOKEN}
+      - PRESSROOM_PUBS_GIT_TOKEN=${PRESSROOM_PUBS_GIT_TOKEN}
+      - IDEAS_WORKBENCH_REPO=${IDEAS_WORKBENCH_REPO}
+      - PRESSROOM_PUBS_REPO=${PRESSROOM_PUBS_REPO}
+      - APP_USER=${APP_USER}
+      - APP_PASSWORD=${APP_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET}
+      - AUTHOR_NAME=${AUTHOR_NAME}
+      - AUTHOR_EMAIL=${AUTHOR_EMAIL}
+      - AUTHOR_GITHUB=${AUTHOR_GITHUB}
     volumes:
       - pressroom-data:/app/data
     restart: unless-stopped
