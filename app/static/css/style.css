@@ -64,6 +64,7 @@ html, body {
 .nav-item:hover { color: var(--accent); background: var(--accent-light); }
 .nav-item.active { color: var(--accent); border-bottom-color: var(--accent); }
 .nav-help { margin-left: auto; font-weight: 400; color: var(--gray); }
+.nav-copyright { font-size: 11px; color: #bbb; padding: 0 12px; align-self: center; white-space: nowrap; }
 
 /* ── Work area — two-pane split ── */
 .work-area {
