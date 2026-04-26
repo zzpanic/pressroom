@@ -23,6 +23,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from auth import check_auth
 from config import IDEAS_WORKBENCH_REPO, PRESSROOM_REPO, TEMP_DIR
@@ -31,6 +32,15 @@ from github import gh_get, gh_get_text, gh_put_bytes
 from services.frontmatter import parse_frontmatter
 from services.pdf import generate_pdf
 from services.preflight import run_preflight
+
+
+class PreviewRequest(BaseModel):
+    """
+    The form sends its current frontmatter values so the PDF reflects what the
+    user has typed, not whatever is (or isn't) saved in the GitHub file yet.
+    The server fetches only the paper body from GitHub.
+    """
+    frontmatter: dict
 
 # Slug must be lowercase letters, digits, hyphens, underscores only.
 # This blocks path traversal (e.g. "../etc") before the slug touches the filesystem.
@@ -45,27 +55,30 @@ _LOCAL_TEMPLATE_DIR = Path("/app/pandoc")
 router = APIRouter()
 
 
-@router.get("/api/preview/{slug}")
-async def preview_pdf(slug: str, _: str = Depends(check_auth)):
+@router.post("/api/preview/{slug}")
+async def preview_pdf(slug: str, req: PreviewRequest, _: str = Depends(check_auth)):
     """
     Generate a PDF for the given paper slug and return it to the browser.
 
+    The client POSTs the current form frontmatter so the PDF reflects what the
+    user has typed — the file on GitHub may not have been saved yet, or may have
+    no frontmatter at all for a new paper.  The server fetches only the body text
+    from GitHub and combines it with the form's frontmatter.
+
     Steps:
       1. Validate the slug format (blocks path traversal)
-      2. Fetch {slug}/publish/{slug}.md from GitHub
-      3. Parse frontmatter and body
-      4. Run pre-flight checks (required fields, placeholders, LaTeX-unsafe chars)
-      5. Load the LaTeX template (local filesystem first, GitHub fallback)
-      6. Run Pandoc + XeLaTeX to generate the PDF
-      7. Push the PDF back to GitHub as the review copy
-      8. Return the PDF to the browser
+      2. Fetch {slug}/publish/{slug}.md from GitHub — extract body only
+      3. Run pre-flight checks using the form's frontmatter and the GitHub body
+      4. Load the LaTeX template (local filesystem first, GitHub fallback)
+      5. Run Pandoc + XeLaTeX to generate the PDF
+      6. Push the PDF back to GitHub as the review copy
+      7. Return the PDF to the browser
 
     HTTP responses:
       200  PDF returned.  X-Pressroom-Warnings header contains pre-flight warnings as JSON.
-      400  Slug is invalid, or pre-flight found blocking errors (missing title, empty body,
-           placeholders at review/published gate).
-      404  Paper .md file not found, or LaTeX template not found anywhere.
-      500  Pandoc/XeLaTeX failed — stderr is included in the error detail.
+      400  Slug invalid, or pre-flight blocking error (empty body, placeholders at final gate).
+      404  Paper .md file not found, or LaTeX template not found.
+      500  Pandoc/XeLaTeX failed — stderr included in error detail.
     """
     # ── 1. Validate slug ──────────────────────────────────────────────────────
     if not _SLUG_RE.match(slug):
@@ -74,14 +87,17 @@ async def preview_pdf(slug: str, _: str = Depends(check_auth)):
             f"Invalid slug '{slug}'. Use only lowercase letters, digits, hyphens, or underscores."
         )
 
-    # ── 2. Fetch the paper markdown from GitHub ───────────────────────────────
+    # ── 2. Fetch paper from GitHub — body only ───────────────────────────────
+    # The form is the source of truth for frontmatter. We only need the body
+    # text from the file. If the file has frontmatter we discard it; if not,
+    # the whole file is the body.
     md_path = f"{slug}/publish/{slug}.md"
     md_text = await gh_get_text(IDEAS_WORKBENCH_REPO, md_path)
     if md_text is None:
         raise PaperNotFoundError(slug)
 
-    # ── 3. Parse frontmatter and body ─────────────────────────────────────────
-    frontmatter, body = parse_frontmatter(md_text)
+    _, body = parse_frontmatter(md_text)
+    frontmatter = req.frontmatter
 
     # ── 4. Pre-flight checks ──────────────────────────────────────────────────
     preflight = run_preflight(frontmatter, body)

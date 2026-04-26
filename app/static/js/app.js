@@ -332,9 +332,13 @@ async function savePaper() {
 async function previewPDF() {
   setMsg('action-msg', 'Generating PDF — this may take 20–30 seconds...', 'info');
   try {
-    // The preview endpoint returns the PDF as a binary blob, not JSON,
-    // so we use raw fetch() instead of the api() wrapper
-    const r = await fetch(`/api/preview/${currentSlug}`);
+    // POST the current form frontmatter so the PDF reflects what the user has
+    // typed, not whatever is (or isn't) saved in the GitHub file yet.
+    const r = await fetch(`/api/preview/${currentSlug}`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ frontmatter: buildFrontmatter() }),
+    });
     if (!r.ok) {
       const err = await r.text();
       setMsg('action-msg', `PDF generation failed: ${err}`, 'err');
