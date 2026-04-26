@@ -1,20 +1,21 @@
-# services/bootstrap.py
-# ─────────────────────────────────────────────────────────────────────────────
-# Auto-populates zz-pressroom/ in the user's ideas-workbench repo on first run.
-#
-# zz-pressroom/ is the per-user Pressroom config home.  It lives alongside the
-# papers in the workbench repo so it's version-controlled and Obsidian-editable.
-#
-# Files created (only if they don't already exist — never overwrites):
-#
-#   zz-pressroom/author.yaml              — author metadata seeded from env vars
-#   zz-pressroom/defaults.yaml            — default frontmatter values per paper
-#   zz-pressroom/templates/whitepaper.latex — bundled template copied from image
-#
-# Called once from /api/config on first login.  Subsequent calls skip it because
-# author.yaml already exists.  The check is a single GitHub API call so the cost
-# is negligible.
-# ─────────────────────────────────────────────────────────────────────────────
+"""
+services/bootstrap.py — First-run initialisation of zz-pressroom/ in the workbench repo.
+
+zz-pressroom/ is the per-user Pressroom config home.  It lives alongside the papers
+in the workbench repo so it is version-controlled and editable in Obsidian.
+
+Called once from /api/config on first login, using author.yaml as a sentinel.  If it
+already exists the function returns immediately (one GitHub API call).  Otherwise it
+creates all default files — never overwriting anything the user has already customised.
+
+Files created on first run:
+    zz-pressroom/author.yaml                  — author metadata seeded from env vars
+    zz-pressroom/defaults.yaml                — default frontmatter values per paper
+    zz-pressroom/prompts/new-paper.md         — default paper-generation AI prompt
+    zz-pressroom/templates/whitepaper.latex   — bundled LaTeX template from the image
+
+SPEC REFERENCE: §5.1 "Author-Specific Config" — zz-pressroom/ folder structure
+"""
 
 from pathlib import Path
 
@@ -28,8 +29,9 @@ from config import (
 )
 from github import gh_get_text, gh_put
 
-# The bundled LaTeX templates live here inside the Docker image
-_LOCAL_TEMPLATE_DIR = Path("/app/pandoc")
+# Bundled LaTeX templates live in the pandoc/ subfolder of the templates directory.
+# Adding a new engine (e.g. sile) just means adding a sile/ subdirectory alongside it.
+_LOCAL_TEMPLATE_DIR = Path("/app/static/templates/pandoc")
 
 # Root of the per-user config folder in the workbench repo
 _ZZ = "zz-pressroom"

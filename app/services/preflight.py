@@ -1,21 +1,23 @@
-# services/preflight.py
-# ─────────────────────────────────────────────────────────────────────────────
-# Pre-flight checks run before PDF generation.
-#
-# These are Pressroom-specific checks, not a generic markdown linter.
-# A generic linter (markdownlint, etc.) produces noise on academic markdown —
-# it doesn't understand [PLACEHOLDER: ...] syntax, footnotes, citation styles,
-# or the fact that headings don't need to be sequential in a working draft.
-#
-# What we check instead:
-#   1. Required frontmatter fields — title must exist for the PDF header
-#   2. Unresolved placeholders — [PLACEHOLDER: ...] markers left in the text
-#   3. LaTeX-unsafe bare characters — %, & outside code blocks will crash XeLaTeX
-#   4. Empty body — nothing to render
-#
-# Checks return a list of Issue objects.  The caller decides whether to block
-# (on errors) or warn (on warnings) and surface them to the user.
-# ─────────────────────────────────────────────────────────────────────────────
+"""
+services/preflight.py — Pre-flight quality checks run before PDF generation.
+
+These are Pressroom-specific checks, not a generic markdown linter.  Generic
+linters produce noise on academic markdown — they don't understand
+[PLACEHOLDER: ...] syntax, footnotes, citation styles, or the fact that headings
+don't need to be sequential in a working draft.
+
+Checks performed (in order):
+  1. Required frontmatter fields  — title must exist for the PDF header
+  2. Unresolved placeholders      — [PLACEHOLDER: ...] markers left in the text
+  3. LaTeX-unsafe bare characters — % and & outside code blocks will crash XeLaTeX
+  4. Empty body                   — nothing to render
+
+Returns a PreflightResult with errors (blocking) and warnings (advisory).
+Routers block PDF generation on errors but surface warnings to the author
+in the UI via response headers.
+
+SPEC REFERENCE: §7.4 "Publish Workflow" step 2 — pre-flight validation
+"""
 
 import re
 from dataclasses import dataclass, field

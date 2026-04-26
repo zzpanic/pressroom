@@ -1,28 +1,28 @@
-# services/frontmatter.py
-# ─────────────────────────────────────────────────────────────────────────────
-# Parses and writes the YAML frontmatter block in .md files.
-#
-# Per spec §7.4: the YAML frontmatter inside {slug}/publish/{slug}.md is the
-# single source of truth for both the paper content and its metadata.
-# Pressroom reads this file, shows the metadata fields in the UI, and writes
-# any changes back to the same file — leaving the paper body untouched.
-#
-# What is frontmatter?
-# --------------------
-# A markdown file with frontmatter looks like this:
-#
-#   ---
-#   title: My Great Idea
-#   gate: exploratory
-#   version: v0.1-exploratory
-#   ---
-#
-#   # Introduction
-#   The actual paper text starts here...
-#
-# Everything between the first --- and the second --- is YAML metadata.
-# Everything after the second --- is the paper body.
-# ─────────────────────────────────────────────────────────────────────────────
+"""
+services/frontmatter.py — YAML frontmatter parsing and writing for paper .md files.
+
+Provides parse_frontmatter(), write_frontmatter(), and apply_derived_fields() — the
+core functions for reading and writing the metadata block at the top of each paper's
+Markdown file.  Also defines GATE_VERSIONS and LICENSE_URLS constants used across
+the app to derive version strings and license URLs from gate/license names.
+
+A markdown file with frontmatter looks like this:
+
+    ---
+    title: My Great Idea
+    gate: exploratory
+    version: v0.1-exploratory
+    ---
+
+    # Introduction
+    The actual paper text starts here...
+
+Everything between the first --- and the second --- is YAML metadata (frontmatter).
+Everything after the second --- is the paper body.  Pressroom reads, modifies, and
+writes back only the frontmatter — the body is always preserved exactly as-is.
+
+SPEC REFERENCE: §5 "Frontmatter Schema"
+"""
 
 from datetime import datetime
 from typing import Any

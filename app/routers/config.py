@@ -1,20 +1,24 @@
-# routers/config.py
-# ─────────────────────────────────────────────────────────────────────────────
-# Provides the /api/config endpoint.
-#
-# The frontend calls this once on startup to get the author's details and repo
-# names.  Per spec §7.3, author details are read from author.yaml in the
-# ideas-workbench repo (at zz-pressroom/author.yaml), NOT from environment
-# variables.  This keeps the author profile editable in Obsidian alongside
-# the ideas, without needing to restart the Docker container.
-#
-# Expected author.yaml format (in ideas-workbench/zz-pressroom/author.yaml):
-#
-#   name: Patrick Nichols
-#   email: patrick@example.com
-#   github: zzpanic
-#   orcid: 0000-0000-0000-0000   (optional)
-# ─────────────────────────────────────────────────────────────────────────────
+"""
+routers/config.py — Author configuration endpoint.
+
+GET /api/config — return author details and repo names to the frontend.
+
+Per spec §7.3, author details come from zz-pressroom/author.yaml in the
+ideas-workbench repo — NOT from environment variables.  This lets the author
+edit their profile in Obsidian without restarting the Docker container.
+
+Expected format (at ideas-workbench/zz-pressroom/author.yaml):
+
+    name: Patrick Nichols
+    email: patrick@example.com
+    github: zzpanic
+    orcid: 0000-0000-0000-0000   (optional)
+
+On the first call this endpoint also triggers bootstrap_if_needed(), which
+creates the zz-pressroom/ folder with default files if it does not exist yet.
+
+SPEC REFERENCE: §7.3 "Author Configuration"
+"""
 
 import logging
 

@@ -218,7 +218,7 @@ async def create_snapshot(slug: str, body: str, frontmatter: dict, gate: str, us
     SPEC REFERENCE: §7.5 "Publish Workflow" step 6
     """
     import logging
-    from github import gh_get, gh_get_bytes, gh_put, gh_put_bytes, WORKBENCH_HEADERS
+    from github import gh_get, gh_get_bytes, gh_list, gh_put, gh_put_bytes, WORKBENCH_HEADERS
     from config import IDEAS_WORKBENCH_REPO
     from services.frontmatter import write_frontmatter
 
@@ -289,6 +289,45 @@ async def create_snapshot(slug: str, body: str, frontmatter: dict, gate: str, us
     except Exception as exc:
         raise SnapshotCreationError(f"Failed to write snapshot PDF to workbench: {exc}", slug=slug, version=version) from exc
 
+    # ── 3. Copy artifacts/ folder into workbench snapshot ────────────────────
+    # gh_list returns [] when the folder doesn't exist, so papers with no
+    # artifacts folder are handled gracefully — the loop simply never runs.
+    # Only flat files are copied; subdirectories inside artifacts/ are skipped.
+    artifacts_src = f"{slug}/publish/artifacts"
+    artifact_items = await gh_list(IDEAS_WORKBENCH_REPO, artifacts_src, headers=WORKBENCH_HEADERS)
+
+    for item in artifact_items:
+        if item["type"] != "file":
+            continue
+
+        src_path  = f"{artifacts_src}/{item['name']}"
+        dest_path = f"{prefix}/artifacts/{item['name']}"
+
+        artifact_bytes = await gh_get_bytes(IDEAS_WORKBENCH_REPO, src_path, headers=WORKBENCH_HEADERS)
+        if artifact_bytes is None:
+            continue
+
+        existing_artifact = await gh_get(IDEAS_WORKBENCH_REPO, dest_path, headers=WORKBENCH_HEADERS)
+        artifact_sha = existing_artifact["sha"] if existing_artifact else None
+
+        try:
+            await gh_put_bytes(
+                IDEAS_WORKBENCH_REPO,
+                dest_path,
+                artifact_bytes,
+                message=f"pressroom: snapshot {slug} {version} — artifact {item['name']}",
+                sha=artifact_sha,
+                headers=WORKBENCH_HEADERS,
+            )
+            logging.info(f"Snapshot artifact written to {IDEAS_WORKBENCH_REPO}/{dest_path}")
+        except SnapshotCreationError:
+            raise
+        except Exception as exc:
+            raise SnapshotCreationError(
+                f"Failed to write snapshot artifact '{item['name']}': {exc}",
+                slug=slug, version=version,
+            ) from exc
+
     return snapshot_path
 
 
@@ -313,7 +352,7 @@ async def mirror_to_pubs(snapshot_path: SnapshotPath, github_token: str) -> None
     """
     import logging
     from github import (
-        gh_get, gh_get_text, gh_get_bytes,
+        gh_get, gh_get_text, gh_get_bytes, gh_list,
         gh_put, gh_put_bytes,
         WORKBENCH_HEADERS, PUBS_HEADERS,
     )
@@ -381,3 +420,45 @@ async def mirror_to_pubs(snapshot_path: SnapshotPath, github_token: str) -> None
     except Exception as exc:
         logging.error(f"Failed to mirror PDF to pressroom-pubs: {exc}")
         raise MirrorError(f"Failed to mirror PDF {pdf_dest_path}: {exc}", pubs_repo=PRESSROOM_PUBS_REPO) from exc
+
+    # ── 3. Mirror artifacts/ ──────────────────────────────────────────────────
+    # Copy each file from the workbench snapshot artifacts folder to pubs.
+    # If the folder doesn't exist gh_list returns [] and the loop is a no-op.
+    artifacts_prefix = f"{prefix}/artifacts"
+    try:
+        artifact_items = await gh_list(IDEAS_WORKBENCH_REPO, artifacts_prefix, headers=WORKBENCH_HEADERS)
+    except Exception:
+        artifact_items = []
+
+    for item in artifact_items:
+        if item["type"] != "file":
+            continue
+
+        src_path  = f"{artifacts_prefix}/{item['name']}"
+        dest_path = f"{artifacts_prefix}/{item['name']}"  # same relative path in pubs
+
+        artifact_bytes = await gh_get_bytes(IDEAS_WORKBENCH_REPO, src_path, headers=WORKBENCH_HEADERS)
+        if artifact_bytes is None:
+            continue
+
+        existing_artifact = await gh_get(PRESSROOM_PUBS_REPO, dest_path, headers=PUBS_HEADERS)
+        artifact_sha = existing_artifact["sha"] if existing_artifact else None
+
+        try:
+            await gh_put_bytes(
+                PRESSROOM_PUBS_REPO,
+                dest_path,
+                artifact_bytes,
+                message=f"publish {slug} {version} — artifact {item['name']}",
+                sha=artifact_sha,
+                headers=PUBS_HEADERS,
+            )
+            logging.info(f"Mirrored artifact {item['name']} to {PRESSROOM_PUBS_REPO}")
+        except MirrorError:
+            raise
+        except Exception as exc:
+            logging.error(f"Failed to mirror artifact {item['name']}: {exc}")
+            raise MirrorError(
+                f"Failed to mirror artifact '{item['name']}': {exc}",
+                pubs_repo=PRESSROOM_PUBS_REPO,
+            ) from exc

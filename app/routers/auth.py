@@ -13,12 +13,12 @@ SPEC REFERENCE: §9.1 "Authentication Flow"
 
 import secrets
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from auth_store import create_jwt_token
 from config import APP_USER, APP_PASSWORD
 from database import get_user_by_username
-from auth import verify_password
+from auth import verify_password, check_auth
 from models import LoginRequest, LoginResponse, TokenUpdateRequest
 
 router = APIRouter()
@@ -71,7 +71,7 @@ async def login(body: LoginRequest):
 
 
 @router.post("/api/auth/token")
-async def save_github_token(body: TokenUpdateRequest):
+async def save_github_token(body: TokenUpdateRequest, _: str = Depends(check_auth)):
     """
     Save or update the authenticated user's encrypted GitHub personal access token.
 

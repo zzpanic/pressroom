@@ -1,22 +1,19 @@
-# routers/papers.py
-# ─────────────────────────────────────────────────────────────────────────────
-# API endpoints for listing papers and reading/writing paper metadata.
-#
-# Per spec §7.4: the YAML frontmatter inside {slug}/publish/{slug}.md is the
-# single source of truth.  There is no separate manifest.json.
-#
-# When the frontend loads a paper:
-#   GET /api/papers/{slug} → fetches {slug}/publish/{slug}.md from GitHub,
-#   parses the frontmatter, and returns the fields to populate the UI form.
-#
-# When the frontend saves changes:
-#   POST /api/papers/{slug}/save → receives updated fields, fetches the
-#   current .md file to extract the paper body, rebuilds the full document
-#   with new frontmatter, and pushes it back to GitHub.
-#
-# The paper body (the actual text content) is never sent to or from the UI —
-# only the frontmatter metadata is managed here.  Body edits happen in Obsidian.
-# ─────────────────────────────────────────────────────────────────────────────
+"""
+routers/papers.py — Paper listing, loading, and metadata save endpoints.
+
+GET  /api/papers                   — list all papers with gate and version status
+GET  /api/papers/{slug}            — load frontmatter fields for a single paper
+GET  /api/papers/{slug}/versions   — list versioned snapshot folders for a paper
+POST /api/papers/{slug}/save       — write updated frontmatter back to GitHub
+
+Per spec §7.4, the YAML frontmatter inside {slug}/publish/{slug}.md is the single
+source of truth for paper metadata.  There is no separate manifest or index file.
+
+The paper body (actual text content) is never sent through the UI — only frontmatter
+metadata is managed here.  Body edits happen directly in Obsidian.
+
+SPEC REFERENCE: §7.4 "Publish Workflow" — paper metadata management
+"""
 
 import asyncio
 

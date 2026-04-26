@@ -1,16 +1,25 @@
-# github.py
-# ─────────────────────────────────────────────────────────────────────────────
-# All GitHub API calls go through the helper functions in this file.
-# Nothing else in the app talks to GitHub directly.
-#
-# Two repos need different auth tokens (ideas-workbench and pressroom-pubs),
-# so this module exposes two pre-built header dicts — WORKBENCH_HEADERS and
-# PUBS_HEADERS — and every function accepts a `headers` parameter so the
-# caller can choose which identity to use.
-#
-# Most calls operate on ideas-workbench, so WORKBENCH_HEADERS is the default
-# and callers only need to pass PUBS_HEADERS for pressroom-pubs operations.
-# ─────────────────────────────────────────────────────────────────────────────
+"""
+github.py — GitHub REST API client for Pressroom.
+
+All GitHub API calls in the app go through this module — nothing else in the
+codebase talks to the GitHub API directly.
+
+Two repos need different auth tokens (ideas-workbench is private; pressroom-pubs
+is public), so this module exposes two pre-built header dicts — WORKBENCH_HEADERS
+and PUBS_HEADERS — and every helper accepts a `headers` parameter so callers can
+choose which identity to use.  Most calls operate on ideas-workbench, so
+WORKBENCH_HEADERS is the default.
+
+FUNCTIONS:
+    gh_get(repo, path)            — fetch a file's metadata + content (None if 404)
+    gh_get_text(repo, path)       — decode file content as a UTF-8 string
+    gh_get_bytes(repo, path)      — decode file content as raw bytes (used for PDFs)
+    gh_list(repo, path)           — list a folder's contents
+    gh_put(repo, path, ...)       — create or update a text file
+    gh_put_bytes(repo, path, ...) — create or update a binary file
+
+SPEC REFERENCE: §11 "GitHub Integration"
+"""
 
 import base64
 from typing import Optional

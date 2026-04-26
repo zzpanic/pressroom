@@ -1,22 +1,18 @@
-# routers/prompts.py
-# ─────────────────────────────────────────────────────────────────────────────
-# API endpoints for the prompts library.
-#
-# Prompts are markdown files stored in zz-pressroom/prompts/ in the user's
-# ideas-workbench repo.  They are shown in the Prompts tab as cards with a
-# short preview and a copy-to-clipboard button.
-#
-# The user owns these prompts — they can add, edit, or delete them in Obsidian
-# and the changes appear in the app immediately (no rebuild needed).
-#
-# GET /api/prompts
-#   Returns all prompt files as [{name, preview}] where preview is the first
-#   few lines of the file content (enough to show in the card).
-#
-# GET /api/prompts/{name}
-#   Returns the full content of a single prompt file so the copy button can
-#   put the whole text on the clipboard.
-# ─────────────────────────────────────────────────────────────────────────────
+"""
+routers/prompts.py — Prompts library endpoints.
+
+GET /api/prompts        — list all prompts with name and preview text
+GET /api/prompts/{name} — return the full content of a single prompt
+
+Prompts are Markdown files stored in zz-pressroom/prompts/ in the user's
+ideas-workbench repo.  They appear in the Prompts tab as cards with a short
+preview and a copy-to-clipboard button.
+
+The user owns and edits these files in Obsidian — changes appear in the app
+immediately without restarting the container.
+
+SPEC REFERENCE: §5.1 "Author-Specific Config" — zz-pressroom/prompts/ structure
+"""
 
 import re
 

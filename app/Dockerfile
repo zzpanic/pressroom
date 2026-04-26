@@ -57,7 +57,8 @@ COPY app/*.py .
 COPY app/routers/ ./routers/
 COPY app/services/ ./services/
 COPY app/static/ ./static/
-COPY pandoc/ ./pandoc/
+# Templates are now under app/static/templates/{engine}/ and are included
+# by the COPY app/static/ line above — no separate pandoc/ copy needed.
 
 EXPOSE 8000
 

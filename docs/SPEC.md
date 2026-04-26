@@ -42,6 +42,8 @@ In a multi-user deployment, each user has their own `ideas-workbench` and `press
 ├── zz-pressroom/                   # User-specific Pressroom config
 │   ├── author.yaml                 # Author metadata (name, email, github, orcid)
 │   ├── defaults.yaml               # Default frontmatter values per template
+│   ├── prompts/                    # AI prompt templates shown in the Prompts tab
+│   │   └── new-paper.md           # Default paper-generation prompt (bootstrapped on first login)
 │   └── templates/                  # User-uploaded document templates
 │       ├── whitepaper.latex        # LaTeX templates
 │       ├── blogpost.lufi           # Sile templates (future)
@@ -123,14 +125,18 @@ pressroom/
 │       ├── index.html
 │       ├── css/
 │       ├── js/
-│       └── templates/              # Bundled fallback document templates
+│       └── templates/              # Bundled document templates, organised by engine type
+│           ├── pandoc/             # LaTeX templates for the Pandoc/XeLaTeX engine
+│           │   └── whitepaper.latex
+│           ├── prompt/             # Paper structure templates (Markdown with placeholders)
+│           │   └── whitepaper.md
+│           └── sile/               # Sile templates (future — add .lufi files here)
 ├── .github/
 │   └── workflows/
 │       └── docker-build.yml        # Builds and pushes image to GHCR on push to main
 ├── docker-compose.yml              # Container orchestration (Dockge)
 ├── .env.example                    # Template for .env — copy and fill in secrets
-├── pandoc/                         # LaTeX templates used by the Pandoc PDF engine
-│   └── whitepaper.latex            # Default whitepaper template (XeLaTeX, Liberation Sans)
+│   (pandoc/ and templates/ directories removed — templates are now under app/static/templates/)
 ├── LICENSE
 ├── README.md
 └── docs/
@@ -353,6 +359,26 @@ The publish workflow transforms a working draft into a versioned, published snap
 
 The approval step is a deliberate gate — nothing publishes automatically.
 
+### 7.6 Prompts Library
+
+The Prompts tab surfaces AI prompt templates stored in the user's workbench repo. These are plain Markdown files that the user writes and edits in Obsidian — no app rebuild is needed when they change.
+
+**Folder location:** `{user-workbench}/zz-pressroom/prompts/`
+
+**Bootstrapped on first login:** `bootstrap_if_needed()` creates `new-paper.md` in this folder if it doesn't exist yet. This gives the user a working starting point they can customise.
+
+**Endpoints:**
+
+```text
+GET /api/prompts         — list all .md files in zz-pressroom/prompts/ as [{name, preview, content}]
+                           preview is the first 300 characters; content is the full text
+GET /api/prompts/{name}  — return the full content of a single prompt file
+```
+
+The UI displays each prompt as a card with a short preview and a copy-to-clipboard button. Clicking copy puts the full prompt text on the clipboard, ready to paste into an AI chat.
+
+> **Why user-owned prompts?** Prompt quality is personal and evolves over time. Storing prompts in the workbench repo means they are version-controlled, Obsidian-editable, and always in sync with the papers they are designed to produce. The user can maintain a library of prompts for different paper types without the app needing to know about them.
+
 ---
 
 ## 8. PDF Generation — Modular Engine Architecture
@@ -412,24 +438,31 @@ class PDFEngine(Protocol):
 
 ### 8.3 Template Resolution Order
 
-Templates are resolved in the following priority order:
+Templates are organised by engine type under `app/static/templates/`:
 
-1. **User's `zz-pressroom/templates/` in their workbench repo** (uploaded via UI)
-   - Highest priority — these are user-customized templates
-   - Stored as files like `whitepaper.latex` in the workbench repo
-2. **Bundled templates in the pressroom app repo** (`app/static/templates/`)
-   - Fallback if user hasn't uploaded their own
-   - Maintained by the pressroom project
-3. **Remote templates from `PRESSROOM_REPO`** (deprecated, last resort)
-   - Fetches from GitHub on each request
-   - Slow and fragile — only used if nothing else is available
+```text
+app/static/templates/
+├── pandoc/          # LaTeX templates (.latex) for the Pandoc/XeLaTeX engine
+│   └── whitepaper.latex
+├── prompt/          # Paper structure templates (.md) shown in the Templates tab
+│   └── whitepaper.md
+└── sile/            # Sile templates (.lufi) — add files here when implementing Sile
+```
 
-> **Template resolution explanation:** When the user selects a template name (e.g. "whitepaper"), the app checks:
-> 1. Does `{user-workbench}/zz-pressroom/templates/whitepaper.latex` exist? (GitHub API `gh_get()`)
-> 2. If not, does the bundled templates directory contain it?
-> 3. If not, fetch from `PRESSROOM_REPO/templates/whitepaper.latex`
-> 
-> This cascading fallback ensures the app works even if template sources are unavailable.
+At runtime, templates are resolved in the following priority order:
+
+1. **User's `zz-pressroom/templates/` in their workbench repo** — highest priority; user-customised versions override bundled defaults
+
+2. **Bundled templates in the image** at `/app/static/templates/{engine}/` — fast local read, no network dependency
+
+3. **Remote fallback from `PRESSROOM_REPO`** at `app/static/templates/{engine}/` — used only when a template is not bundled in the running image (e.g. a newly added template that hasn't been built yet)
+
+> **Template resolution explanation:** When the user selects a template named "whitepaper" and the active engine is Pandoc, the app checks:
+> 1. Does `{user-workbench}/zz-pressroom/templates/whitepaper.latex` exist? (GitHub API)
+> 2. If not, does `/app/static/templates/pandoc/whitepaper.latex` exist on the local filesystem?
+> 3. If not, fetch `app/static/templates/pandoc/whitepaper.latex` from the `PRESSROOM_REPO` GitHub repo.
+>
+> Adding a new engine (e.g. Sile) only requires adding a `sile/` subdirectory — no code changes needed.
 
 ### 8.4 Template Validation
 
@@ -596,13 +629,15 @@ Each user gets their own quota (their token = their quota). The app does not agg
 
 ## 10. Non-Blocking UI and Async Task Preparation
 
-### 10.1 Current State — Blocking PDF Generation
+### 10.1 Current State — Thread-Pool PDF Generation
 
-Currently, PDF generation uses `subprocess.run()` which **blocks the async event loop** while Pandoc/XeLaTeX runs (~5-30 seconds). During this time:
-- The HTTP request is pending (browser shows a loading spinner)
-- No other requests from this user are processed (FastAPI handles one request at a time per worker)
+PDF generation uses `asyncio.get_event_loop().run_in_executor()` to run Pandoc/XeLaTeX (~5-30 seconds) in a thread pool. This means:
 
-> **What does "blocking the event loop" mean?** Python's async runtime (uvicorn) uses a single thread to process requests. When `subprocess.run()` is called, that thread is occupied waiting for Pandoc to finish. No other requests can be processed until it returns. For a single-user local app this is acceptable. For multi-user, we need non-blocking execution.
+- The async event loop remains free to handle other requests while Pandoc runs
+- The HTTP request is pending (browser shows a loading spinner) until the PDF is ready
+- The generating thread is occupied, but other async requests can be processed concurrently
+
+> **What does run_in_executor do?** Python's `asyncio` runtime processes requests on a single thread using cooperative multitasking. Blocking calls like `subprocess.run()` would occupy that thread entirely. `run_in_executor()` offloads the blocking call to a separate thread pool, allowing the event loop to `await` the result without freezing. For a single-user deployment this is sufficient. For high-concurrency multi-user, a distributed task queue (Celery, RQ) would replace the thread pool without changing any router code.
 
 ### 10.2 Prepared Architecture — Async Task Queue Stubs
 
@@ -994,7 +1029,7 @@ class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         # Build a dict of log entry fields
         log_entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),  # ISO 8601 format
+            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),  # ISO 8601, uses log record's actual creation time
             "level": record.levelname,                             # INFO, ERROR, etc.
             "logger": record.name,                                 # Which module logged this
             "message": record.getMessage(),                        # The log message
@@ -1270,13 +1305,17 @@ RUN fc-cache -fv
 
 WORKDIR /app
 
-COPY requirements.txt .
+# Build context is the repo root (context: .) so all paths need the app/ prefix.
+# pandoc/ is at the repo root so it needs no prefix.
+COPY app/requirements.txt .
 RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
-COPY *.py .
-COPY routers/ ./routers/
-COPY services/ ./services/
-COPY static/ ./static/
+COPY app/*.py .
+COPY app/routers/ ./routers/
+COPY app/services/ ./services/
+COPY app/static/ ./static/
+# Templates are under app/static/templates/{engine}/ and are included by the
+# COPY app/static/ line above — no separate template copy step needed.
 
 EXPOSE 8000
 
@@ -1385,7 +1424,7 @@ Items not yet implemented, tracked here for future reference:
 
 | Item | Status | Notes |
 |---|---|---|
-| HTML preview before PDF generation | 🔴 Deferred | Requires Jinja2 template rendering |
+| HTML preview (right-pane live preview) | ✅ Implemented | `POST /api/preview/html/{slug}` — Pandoc converts markdown to an HTML5 body fragment in ~1s (no LaTeX). Accepts current form frontmatter in the request body. Used for the live right-pane preview in the UI while editing. Does not push anything to GitHub. |
 | Multiple document style templates | 🟡 Partial | Template upload implemented; only whitepaper template bundled |
 | pressroom-pubs web frontend / index page | 🔴 Deferred | Static site generator for published output |
 | GitHub Actions publish workflow | ✅ Implemented | Builds and pushes to GHCR on push to main |
@@ -1397,6 +1436,9 @@ Items not yet implemented, tracked here for future reference:
 | Blog publisher (`BlogPublisher.publish()`) | 🟡 Partial | Stub exists; implementation deferred until blog CMS target is decided |
 | DOCX publisher (`DocxPublisher.publish()`) | 🟡 Partial | Stub exists; requires LibreOffice or python-docx in image |
 | Per-user GitHub token save (`POST /api/auth/token`) | 🟡 Partial | Endpoint returns 501; encrypt/decrypt implemented but not wired to a route with auth |
+| `TemplateResolver` not wired to any router | 🟡 Partial | `services/template_resolver.py` implements correct workbench-first resolution but is never called; `routers/preview.py` has its own inline resolution instead. Should either replace preview.py's inline logic or be formally documented as multi-user scaffolding (like the blog/docx publisher stubs). |
+| `GET /api/licenses` endpoint undocumented | 🟡 Partial | Endpoint exists in `routers/templates.py`, fetches `.md` files from `PRESSROOM_REPO/licenses/`, and is used by the UI. The `licenses/` directory at the repo root is not described in the spec. Needs a spec entry. |
+| Paper selector dropdown placeholder | 🔴 Deferred | `app/static/index.html` — paper selector has a hardcoded "loading..." option rather than a JS-managed dynamic placeholder. Low priority UI polish. |
 
 > **Status legend:** ✅ = ready to use, 🟡 = partially implemented / stub exists, 🔴 = not started
 

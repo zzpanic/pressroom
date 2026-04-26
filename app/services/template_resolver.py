@@ -63,14 +63,19 @@ from typing import Optional
 
 from exceptions import TemplateNotFoundError
 
-# Extension used by each engine format
+# File extension used by each engine format
 _FORMAT_EXT = {"latex": ".latex", "sile": ".lufi"}
+
+# Local subdirectory name for each engine format.
+# Adding a new engine means adding an entry here and a matching subdirectory
+# under _LOCAL_TEMPLATE_DIR (e.g. static/templates/sile/).
+_FORMAT_DIR = {"latex": "pandoc", "sile": "sile"}
 
 # Where user-uploaded templates live inside the workbench repo
 _WORKBENCH_TEMPLATE_DIR = "zz-pressroom/templates"
 
-# Local fallback directory inside the container (bundled with the app image).
-# Spec §8.3 says bundled templates live in app/static/templates/.
+# Root of bundled templates inside the container.
+# Each engine type has its own subdirectory: pandoc/, sile/, etc.
 _LOCAL_TEMPLATE_DIR = Path("/app/static/templates")
 
 
@@ -119,8 +124,9 @@ class TemplateResolver:
             if content is not None:
                 return {"name": template_name, "format": fmt, "content": content, "source": "workbench"}
 
-            # 2. Local container fallback
-            local_path = _LOCAL_TEMPLATE_DIR / f"{template_name}{ext}"
+            # 2. Local container fallback — look in the engine-specific subdirectory
+            engine_dir = _FORMAT_DIR.get(fmt, fmt)
+            local_path = _LOCAL_TEMPLATE_DIR / engine_dir / f"{template_name}{ext}"
             if local_path.exists():
                 return {
                     "name": template_name,
@@ -162,15 +168,18 @@ class TemplateResolver:
             # Workbench unavailable — fall through to local only
             pass
 
-        # Local container templates
-        if _LOCAL_TEMPLATE_DIR.exists():
-            for path in sorted(_LOCAL_TEMPLATE_DIR.iterdir()):
-                for fmt, ext in _FORMAT_EXT.items():
-                    if path.name.endswith(ext):
-                        name = path.name[: -len(ext)]
-                        if name not in seen:
-                            seen.add(name)
-                            results.append({"name": name, "format": fmt, "source": "local"})
+        # Local container templates — iterate over each engine subdirectory
+        for fmt, ext in _FORMAT_EXT.items():
+            engine_dir = _FORMAT_DIR.get(fmt, fmt)
+            engine_path = _LOCAL_TEMPLATE_DIR / engine_dir
+            if not engine_path.exists():
+                continue
+            for template_file in sorted(engine_path.iterdir()):
+                if template_file.name.endswith(ext):
+                    name = template_file.name[: -len(ext)]
+                    if name not in seen:
+                        seen.add(name)
+                        results.append({"name": name, "format": fmt, "source": "local"})
 
         return results
 

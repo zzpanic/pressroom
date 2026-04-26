@@ -1,11 +1,14 @@
 name: Build and Push Docker Image
 
+# Triggers on push to main, but only when app/ or pandoc/ files change.
+# This skips a rebuild when only docs, tests, or workflow files are updated.
+# Can also be triggered manually from the Actions tab (workflow_dispatch).
 on:
   push:
     branches: [main]
     paths:
-      - "app/**"
-      - "pandoc/**"
+      - "app/**"    # Python source, Dockerfile, requirements.txt
+      - "pandoc/**" # LaTeX templates bundled into the image
   workflow_dispatch:
 
 jobs:
@@ -13,8 +16,8 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: read
-      packages: write
+      contents: read  # to check out the repo
+      packages: write # to push to ghcr.io
 
     steps:
       - name: Checkout
@@ -30,9 +33,14 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6.18.0
         with:
+          # context is the repo root because the Dockerfile COPYs from both
+          # app/ and pandoc/, which are siblings at the root level.
           context: .
           file: ./app/Dockerfile
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/pressroom:latest
             ghcr.io/${{ github.repository_owner }}/pressroom:${{ github.sha }}
+          # Two tags are published on every build:
+          #   :latest  — what Dockge pulls when you click "Update"
+          #   :<sha>   — an exact build reference for pinning or rollback

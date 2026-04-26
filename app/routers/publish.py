@@ -1,19 +1,22 @@
-# routers/publish.py
-# ─────────────────────────────────────────────────────────────────────────────
-# Handles the final publish step (spec §7.4, steps 5–7).
-#
-# When the author has reviewed the PDF and is satisfied:
-#   5. Approve  — the author confirms version, gate, and metadata in the UI
-#   6. Snapshot — Pressroom creates {slug}/{version}/ in ideas-workbench
-#   7. Mirror   — same snapshot is pushed to pressroom-pubs
-#
-# POST /api/papers/{slug}/publish
-#   Saves the current frontmatter, then creates the versioned snapshot and
-#   mirrors it to pressroom-pubs via direct GitHub API calls.
-#
-# Important: the review PDF ({slug}/publish/{slug}.pdf) must already exist
-# in ideas-workbench.  The user must click "Preview PDF" before publishing.
-# ─────────────────────────────────────────────────────────────────────────────
+"""
+routers/publish.py — Snapshot and release endpoints for Pressroom.
+
+POST /api/papers/{slug}/snapshot — create a versioned snapshot in ideas-workbench (private)
+POST /api/papers/{slug}/publish  — snapshot + mirror to pressroom-pubs (public release)
+
+Per spec §7.4, when the author has reviewed the PDF and is satisfied:
+  5. Approve   — the author confirms version, gate, and metadata in the UI
+  6. Snapshot  — Pressroom creates {slug}/{version}/ in ideas-workbench
+  7. Mirror    — the same snapshot is pushed to pressroom-pubs
+
+IMPORTANT: The review PDF ({slug}/publish/{slug}.pdf) must already exist in
+ideas-workbench before publishing.  The user must click "Preview PDF" first.
+
+The publish endpoint is rate-limited to 5 requests per minute to prevent
+accidental bulk publishing.
+
+SPEC REFERENCE: §7.4 "Publish Workflow" steps 5–7
+"""
 
 import re
 

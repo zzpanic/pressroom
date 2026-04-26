@@ -1,3 +1,19 @@
+"""
+main.py — FastAPI application entry point for Pressroom.
+
+Creates the FastAPI app, registers all API routers, and attaches middleware
+(rate limiting, request ID tracing, structured JSON logging).
+
+Startup sequence (runs before accepting requests):
+  1. Validate required environment variables (IDEAS_WORKBENCH_GIT_TOKEN, etc.)
+  2. Validate GitHub PAT format for both tokens
+  3. Clear the /tmp/pressroom/ temp directory (accumulates across preview calls)
+  4. Initialise the SQLite database (creates tables if they don't exist)
+
+SPEC REFERENCE: §13 "Logging and Observability"
+         §14 "Deployment" — startup sequence
+"""
+
 from pathlib import Path
 
 from fastapi import Depends, FastAPI
@@ -41,8 +57,14 @@ if _tmp.exists():
     shutil.rmtree(_tmp, ignore_errors=True)
 _tmp.mkdir(parents=True, exist_ok=True)
 
-# Initialize database at startup
-init_db()
+# Initialize database at startup.
+# A failure here is fatal — log clearly before re-raising so the operator
+# sees a structured error rather than a raw Python traceback.
+try:
+    init_db()
+except Exception as exc:
+    logger.critical("Database initialisation failed — pressroom cannot start: %s", exc)
+    raise
 
 app = FastAPI(title="Pressroom")
 

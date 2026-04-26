@@ -1,13 +1,30 @@
+# docker-compose.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Pressroom deployment configuration for Dockge (or plain Docker Compose).
+#
+# QUICK START:
+#   1. Copy .env.example → .env and fill in your values
+#   2. docker compose up -d
+#
+# The image is pulled from GitHub Container Registry (ghcr.io) — no local
+# build step needed.  A new image is pushed automatically on every push to
+# the main branch of the pressroom repo.
+# ─────────────────────────────────────────────────────────────────────────────
 version: '3.8'
 
 services:
   pressroom:
     image: ghcr.io/zzpanic/pressroom:latest
     ports:
+      # Host port 7000 → container port 8000 (uvicorn).
+      # Change the left number (7000) to use a different host port.
       - "7000:8000"
     env_file:
+      # Load variables from .env (or Dockge's stack.env file).
       - .env
     environment:
+      # Explicitly map each variable so Docker Compose errors on unset values
+      # rather than silently passing empty strings into the container.
       - IDEAS_WORKBENCH_GIT_TOKEN=${IDEAS_WORKBENCH_GIT_TOKEN}
       - PRESSROOM_PUBS_GIT_TOKEN=${PRESSROOM_PUBS_GIT_TOKEN}
       - IDEAS_WORKBENCH_REPO=${IDEAS_WORKBENCH_REPO}
@@ -19,6 +36,8 @@ services:
       - AUTHOR_EMAIL=${AUTHOR_EMAIL}
       - AUTHOR_GITHUB=${AUTHOR_GITHUB}
     volumes:
+      # Named volume keeps the SQLite database alive across container restarts
+      # and image upgrades.  To inspect: docker volume inspect pressroom_pressroom-data
       - pressroom-data:/app/data
     restart: unless-stopped
 

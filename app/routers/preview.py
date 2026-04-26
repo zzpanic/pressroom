@@ -1,21 +1,24 @@
-# routers/preview.py
-# ─────────────────────────────────────────────────────────────────────────────
-# Handles PDF generation (preview) and the write-back of the review copy.
-#
-# Per spec §7.4 publish workflow, steps 1–4:
-#
-#   1. Pull       — fetch {slug}/publish/{slug}.md from ideas-workbench
-#   2. Pre-flight — validate frontmatter and body before invoking Pandoc
-#   3. Generate   — render via Pandoc + XeLaTeX
-#   4. Write back — push review PDF to {slug}/publish/{slug}.pdf on GitHub
-#   5. Return     — stream the PDF to the browser
-#
-# GET /api/preview/{slug}
-#   Runs steps 1-5.  Returns the PDF with any pre-flight warnings in headers.
-#
-# GET /api/preview/{slug}/download
-#   Returns the last locally generated PDF as a file download (no regeneration).
-# ─────────────────────────────────────────────────────────────────────────────
+"""
+routers/preview.py — PDF and HTML preview endpoints.
+
+POST /api/preview/{slug}          — generate a PDF and return it to the browser
+POST /api/preview/html/{slug}     — render the paper as a fast HTML preview (no LaTeX)
+GET  /api/preview/{slug}/download — serve the last locally generated PDF as a download
+
+Per spec §7.4 publish workflow, steps 1–5:
+  1. Pull       — fetch {slug}/publish/{slug}.md from ideas-workbench
+  2. Pre-flight — validate frontmatter and body before invoking Pandoc
+  3. Generate   — render via Pandoc + XeLaTeX
+  4. Write back — push review PDF to {slug}/publish/{slug}.pdf on GitHub
+  5. Return     — stream the PDF to the browser
+
+The PDF endpoint accepts current form frontmatter in the request body so the
+rendered PDF reflects what the user has typed, not necessarily what is saved in
+GitHub yet.  The HTML endpoint is faster (~1s vs ~30s) and is used for the live
+right-pane preview in the UI.
+
+SPEC REFERENCE: §7.4 "Publish Workflow" steps 1–5
+"""
 
 import json
 import re
@@ -27,6 +30,9 @@ from pydantic import BaseModel
 
 from auth import check_auth
 from config import IDEAS_WORKBENCH_REPO, PRESSROOM_REPO, TEMP_DIR
+from logging_config import get_logger
+
+logger = get_logger(__name__)
 from exceptions import PaperNotFoundError
 from github import gh_get, gh_get_text, gh_put_bytes
 from services.frontmatter import parse_frontmatter
@@ -46,11 +52,11 @@ class PreviewRequest(BaseModel):
 # This blocks path traversal (e.g. "../etc") before the slug touches the filesystem.
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
-# LaTeX templates are baked into the image at /app/pandoc/.
+# LaTeX templates are baked into the image at /app/static/templates/pandoc/.
 # This is the primary source — fast, no network dependency.
 # GitHub is the fallback for templates not found locally (e.g. user-uploaded ones
 # that haven't been built into the image yet).
-_LOCAL_TEMPLATE_DIR = Path("/app/pandoc")
+_LOCAL_TEMPLATE_DIR = Path("/app/static/templates/pandoc")
 
 router = APIRouter()
 
@@ -113,7 +119,7 @@ async def preview_pdf(slug: str, req: PreviewRequest, _: str = Depends(check_aut
 
     if latex_raw is None:
         # Local template not found — try GitHub (user-uploaded or repo template)
-        latex_raw = await gh_get_text(PRESSROOM_REPO, f"pandoc/{template_name}.latex")
+        latex_raw = await gh_get_text(PRESSROOM_REPO, f"app/static/templates/pandoc/{template_name}.latex")
 
     if latex_raw is None:
         raise HTTPException(
@@ -125,6 +131,7 @@ async def preview_pdf(slug: str, req: PreviewRequest, _: str = Depends(check_aut
     try:
         output_path = await generate_pdf(slug, body, frontmatter, latex_raw)
     except RuntimeError as exc:
+        logger.error("PDF generation failed for '%s': %s", slug, exc, exc_info=True)
         raise HTTPException(500, f"PDF generation failed: {exc}")
 
     # ── 7. Push review copy back to GitHub ───────────────────────────────────
