@@ -62,6 +62,15 @@ PRESSROOM_REPO = os.environ.get("PRESSROOM_REPO", "zzpanic/pressroom")
 GITHUB_BRANCH = os.environ.get("GITHUB_BRANCH", "main")
 
 
+# ── Author Details ────────────────────────────────────────────────────────────
+# Used as fallback defaults when author.yaml doesn't exist in the workbench repo.
+# author.yaml (if present) takes priority over these values.
+
+AUTHOR_NAME   = os.environ.get("AUTHOR_NAME", "")
+AUTHOR_EMAIL  = os.environ.get("AUTHOR_EMAIL", "")
+AUTHOR_GITHUB = os.environ.get("AUTHOR_GITHUB", "")
+
+
 # ── App Authentication ────────────────────────────────────────────────────────
 # Username and password for the Pressroom web UI.
 # Change these from the defaults before exposing the app to any network.
