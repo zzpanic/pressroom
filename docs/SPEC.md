@@ -293,7 +293,13 @@ AUTHOR_GITHUB=yourusername
 
 ### 7.3 Config Source
 
-Pressroom reads user config (templates, author details) from `{user-workbench}/zz-pressroom/` via GitHub API on startup or config refresh. This keeps config Obsidian-editable and version-controlled alongside the ideas.
+**Current behaviour (single-user):** Author details (`name`, `email`, `github`) are resolved in this priority order:
+
+1. `{user-workbench}/zz-pressroom/author.yaml` — read via GitHub API on every `/api/config` call
+2. `AUTHOR_NAME` / `AUTHOR_EMAIL` / `AUTHOR_GITHUB` environment variables — fallback when the yaml is absent or a field is blank
+3. Empty string — last resort
+
+**Intended behaviour (multi-user, not yet implemented):** Each user will have an author profile stored in the app's SQLite `users` table. The app is the source of truth for author details — the profile form in the UI saves to the database, and the app then writes `author.yaml` back to the user's workbench repo so Obsidian stays in sync. The read direction reverses: app → yaml, not yaml → app. Environment variables become the seeding defaults for a new user's first login only.
 
 In multi-user mode, each user's tokens and repo URLs are resolved from the SQLite store at authentication time. The `config.py` module gains an async `get_user_config(user_id)` method that returns a `UserConfig` dataclass with per-user values:
 
