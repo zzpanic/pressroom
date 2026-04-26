@@ -128,7 +128,7 @@ pressroom/
 │   └── workflows/
 │       └── docker-build.yml        # Builds and pushes image to GHCR on push to main
 ├── docker-compose.yml              # Container orchestration (Dockge)
-├── .env.example                    # Template for stack.env — copy and fill in secrets
+├── .env.example                    # Template for .env — copy and fill in secrets
 ├── LICENSE
 ├── README.md
 └── docs/
@@ -262,58 +262,29 @@ All other configuration (template content, author details) is read from the user
 
 ### 7.2 Environment Variables (Dockge)
 
-Environment variables are how the container receives configuration from outside. They are set in the `.env` file managed by Dockge.
+Environment variables are how the container receives configuration from outside. They are set in the `.env` file managed by Dockge and passed into the container via the `environment:` block in `docker-compose.yml`.
 
 ```
-# ────────────────────────────────────────────────────────────────
-# App Authentication (fallback for single-user mode)
-# If multi-user JWT auth is not enabled, these provide a single admin login
-# ────────────────────────────────────────────────────────────────
-APP_USER=admin                          # Default username
-APP_PASSWORD=pressroom                  # Default password (CHANGE IN PRODUCTION)
+# GitHub tokens — classic personal access tokens with "repo" scope
+IDEAS_WORKBENCH_GIT_TOKEN=ghp_xxx      # token with repo access to your papers repo
+PRESSROOM_PUBS_GIT_TOKEN=ghp_xxx       # token with repo access to your pubs repo
 
-# ────────────────────────────────────────────────────────────────
-# JWT Configuration
-# JWT (JSON Web Token) is used for session-based authentication
-# JWT_SECRET should be a random 64-character string
-# JWT_EXPIRY_MINUTES controls how long a login session lasts
-# ────────────────────────────────────────────────────────────────
-JWT_SECRET=<random-64-char-string>      # Secret key for signing JWTs
-JWT_EXPIRY_MINUTES=480                  # Session duration (8 hours)
+# Repository names — owner/repo format
+IDEAS_WORKBENCH_REPO=you/ideas-workbench
+PRESSROOM_PUBS_REPO=you/pressroom-pubs
 
-# ────────────────────────────────────────────────────────────────
-# Default GitHub Workbench Config (fallback for single-user mode)
-# In multi-user mode, these are overridden per-user from the SQLite store
-# ────────────────────────────────────────────────────────────────
-IDEAS_WORKBENCH_GIT_USER=zzpanic        # GitHub username/owner
-IDEAS_WORKBENCH_GIT_TOKEN=ghp_xxxx      # Personal access token with repo scope
-IDEAS_WORKBENCH_REPO=zzpanic/ideas-workbench  # owner/repo format
+# App authentication — login credentials for the Pressroom web UI
+APP_USER=changeme
+APP_PASSWORD=changeme
 
-# ────────────────────────────────────────────────────────────────
-# Default Pressroom Pubs Config (fallback for single-user mode)
-# ────────────────────────────────────────────────────────────────
-PRESSROOM_PUBS_GIT_USER=zzpanic
-PRESSROOM_PUBS_GIT_TOKEN=ghp_xxxx       # Separate token for pubs repo
-PRESSROOM_PUBS_REPO=zzpanic/pressroom-pubs
+# JWT secret — signs session tokens; generate with:
+#   python3 -c "import secrets; print(secrets.token_hex(32))"
+JWT_SECRET=changeme
 
-# ────────────────────────────────────────────────────────────────
-# App Source Repo
-# Used to fetch templates and prompt templates at runtime
-# Read-only — the workbench token is fine here since pressroom is public
-# ────────────────────────────────────────────────────────────────
-PRESSROOM_REPO=zzpanic/pressroom
-
-# ────────────────────────────────────────────────────────────────
-# Git Branch
-# Which branch to read from and write to in all three repos
-# ────────────────────────────────────────────────────────────────
-GITHUB_BRANCH=main
-
-# ────────────────────────────────────────────────────────────────
-# PDF Engine Selection
-# Which rendering engine to use: "pandoc" (default) or "sile"
-# ────────────────────────────────────────────────────────────────
-PDF_ENGINE=pandoc
+# Author info — used when committing PDFs and snapshots to GitHub
+AUTHOR_NAME=Your Name
+AUTHOR_EMAIL=you@example.com
+AUTHOR_GITHUB=yourusername
 ```
 
 > **Environment variable explanation:** Env vars are read at application startup by `config.py`. Required variables cause the app to fail fast (exit immediately) if missing, rather than failing silently later. The `_TOKEN` values are secrets — they should never be committed to the repository.
@@ -1360,7 +1331,18 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - stack.env
+      - .env
+    environment:
+      - IDEAS_WORKBENCH_GIT_TOKEN=${IDEAS_WORKBENCH_GIT_TOKEN}
+      - PRESSROOM_PUBS_GIT_TOKEN=${PRESSROOM_PUBS_GIT_TOKEN}
+      - IDEAS_WORKBENCH_REPO=${IDEAS_WORKBENCH_REPO}
+      - PRESSROOM_PUBS_REPO=${PRESSROOM_PUBS_REPO}
+      - APP_USER=${APP_USER}
+      - APP_PASSWORD=${APP_PASSWORD}
+      - JWT_SECRET=${JWT_SECRET}
+      - AUTHOR_NAME=${AUTHOR_NAME}
+      - AUTHOR_EMAIL=${AUTHOR_EMAIL}
+      - AUTHOR_GITHUB=${AUTHOR_GITHUB}
     volumes:
       - pressroom-data:/app/data
     restart: unless-stopped
@@ -1370,7 +1352,7 @@ volumes:
     driver: local
 ```
 
-> **`stack.env`** is the Dockge convention for the local secrets file. It is never committed to git. Copy `.env.example` to `stack.env` on the Dockge host and fill in real values. All required environment variables are documented in `.env.example`. **`build:` is intentionally absent** — Dockge pulls the pre-built image from GHCR rather than building locally. Building requires the full Pandoc/TeX Live base image and takes several minutes; this is done once in GitHub Actions, not on every Dockge deployment. The named volume `pressroom-data` persists `/app/data` (the SQLite database) across container recreates. `/tmp/pressroom/` is intentionally ephemeral — PDF temp files are wiped on startup and regenerated on demand.
+> **`.env`** is the file Dockge reads for secrets. It is never committed to git. Copy `.env.example` to `.env` on the Dockge host and fill in real values. The `env_file` directive loads the file and the `environment:` block explicitly passes each variable into the container — both are needed because Dockge requires explicit variable passthrough. **`build:` is intentionally absent** — Dockge pulls the pre-built image from GHCR rather than building locally. Building requires the full Pandoc/TeX Live base image and takes several minutes; this is done once in GitHub Actions, not on every Dockge deployment. The named volume `pressroom-data` persists `/app/data` (the SQLite database) across container recreates. `/tmp/pressroom/` is intentionally ephemeral — PDF temp files are wiped on startup and regenerated on demand.
 
 ---
 
