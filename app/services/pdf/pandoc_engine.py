@@ -96,11 +96,18 @@ class PandocEngine:
         tmpl_latex = work_dir / "template.latex"
         output_pdf = work_dir / "output.pdf"
 
-        # ── 2. Write input markdown (YAML frontmatter block + body) ──────────
-        # Pandoc reads YAML front matter when it appears between --- fences at
-        # the top of the file, which makes title/author available to the template
-        # via $title$, $author$, etc.
-        fm_yaml = yaml.dump(frontmatter, allow_unicode=True, default_flow_style=False)
+        # ── 2. Flatten the frontmatter for Pandoc ────────────────────────────
+        # The app stores author as a nested dict {name, email, github} but the
+        # LaTeX template uses $author$ (a plain string) and $email$ (top-level).
+        # Pandoc cannot unpack a nested dict — we must flatten before writing.
+        pandoc_fm = dict(frontmatter)
+        if isinstance(pandoc_fm.get("author"), dict):
+            author_dict = pandoc_fm["author"]
+            pandoc_fm["author"] = author_dict.get("name", "")
+            pandoc_fm["email"]  = author_dict.get("email", "")
+            pandoc_fm["github"] = author_dict.get("github", "")
+
+        fm_yaml = yaml.dump(pandoc_fm, allow_unicode=True, default_flow_style=False)
         input_md.write_text(f"---\n{fm_yaml}---\n\n{body}", encoding="utf-8")
 
         # ── 3. Write LaTeX template ───────────────────────────────────────────
@@ -117,6 +124,11 @@ class PandocEngine:
             "-o", str(output_pdf),
         ]
 
+        # Run Pandoc in a thread pool so the async event loop stays responsive.
+        # Timeout of 120 seconds — XeLaTeX on a long paper typically takes 10-30s.
+        # If it hasn't finished in 2 minutes something is seriously wrong.
+        _PANDOC_TIMEOUT = 120
+
         loop = asyncio.get_event_loop()
         proc = await loop.run_in_executor(
             None,
@@ -125,6 +137,7 @@ class PandocEngine:
                 capture_output=True,
                 text=True,
                 cwd=str(work_dir),
+                timeout=_PANDOC_TIMEOUT,
             ),
         )
 

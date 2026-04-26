@@ -52,11 +52,17 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
 # Copy the app source code and static files.
-# Templates and LaTeX files are fetched from GitHub at runtime — not here.
 COPY *.py .
 COPY routers/ ./routers/
 COPY services/ ./services/
 COPY static/ ./static/
+
+# Copy LaTeX templates into the image so PDF generation works without a GitHub
+# API call on every preview.  GitHub is used as a fallback only (e.g. for
+# user-uploaded templates not yet in the image).
+# The pandoc/ directory is at the repo root, so the build context must be the
+# repo root (context: . in docker-compose / GitHub Actions), not just ./app.
+COPY pandoc/ ./pandoc/
 
 EXPOSE 8000
 

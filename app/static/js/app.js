@@ -347,7 +347,18 @@ async function previewPDF() {
     document.getElementById('pdf-frame').src = url;
     document.getElementById('pdf-panel').classList.remove('hidden');
 
-    setMsg('action-msg', 'PDF generated and saved to GitHub as review copy', 'ok');
+    // Surface any pre-flight warnings returned in response headers
+    const warnings = JSON.parse(r.headers.get('X-Pressroom-Warnings') || '[]');
+    const placeholders = parseInt(r.headers.get('X-Pressroom-Placeholder-Count') || '0');
+
+    if (warnings.length) {
+      const warnText = warnings.join(' | ');
+      setMsg('action-msg', `PDF generated ⚠ ${warnText}`, 'warn');
+    } else if (placeholders > 0) {
+      setMsg('action-msg', `PDF generated — ${placeholders} placeholder(s) remain`, 'warn');
+    } else {
+      setMsg('action-msg', 'PDF generated and saved to GitHub as review copy', 'ok');
+    }
   } catch (e) {
     setMsg('action-msg', `Error: ${e.message}`, 'err');
   }

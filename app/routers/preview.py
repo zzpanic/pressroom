@@ -4,26 +4,25 @@
 #
 # Per spec §7.4 publish workflow, steps 1–4:
 #
-#   1. Pull   — fetch {slug}/publish/{slug}.md from ideas-workbench
-#   2. Generate PDF — render via Pandoc
-#   3. Write review copy — push the PDF back to {slug}/publish/{slug}.pdf
-#   4. Review — return the PDF to the browser for the author to inspect
-#
-# Clicking "Preview PDF" in the UI triggers all four of these steps in one go.
-# The PDF is saved to GitHub so it's available in Obsidian and for the later
-# snapshot step (which reads the PDF from GitHub, not from /tmp).
+#   1. Pull       — fetch {slug}/publish/{slug}.md from ideas-workbench
+#   2. Pre-flight — validate frontmatter and body before invoking Pandoc
+#   3. Generate   — render via Pandoc + XeLaTeX
+#   4. Write back — push review PDF to {slug}/publish/{slug}.pdf on GitHub
+#   5. Return     — stream the PDF to the browser
 #
 # GET /api/preview/{slug}
-#   Generates the PDF, pushes it to GitHub, returns it to the browser.
+#   Runs steps 1-5.  Returns the PDF with any pre-flight warnings in headers.
 #
 # GET /api/preview/{slug}/download
 #   Returns the last locally generated PDF as a file download (no regeneration).
 # ─────────────────────────────────────────────────────────────────────────────
 
+import json
+import re
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
-
-import re
 
 from auth import check_auth
 from config import IDEAS_WORKBENCH_REPO, PRESSROOM_REPO, TEMP_DIR
@@ -31,10 +30,17 @@ from exceptions import PaperNotFoundError
 from github import gh_get, gh_get_text, gh_put_bytes
 from services.frontmatter import parse_frontmatter
 from services.pdf import generate_pdf
+from services.preflight import run_preflight
 
 # Slug must be lowercase letters, digits, hyphens, underscores only.
 # This blocks path traversal (e.g. "../etc") before the slug touches the filesystem.
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+# LaTeX templates are baked into the image at /app/pandoc/.
+# This is the primary source — fast, no network dependency.
+# GitHub is the fallback for templates not found locally (e.g. user-uploaded ones
+# that haven't been built into the image yet).
+_LOCAL_TEMPLATE_DIR = Path("/app/pandoc")
 
 router = APIRouter()
 
@@ -45,54 +51,70 @@ async def preview_pdf(slug: str, _: str = Depends(check_auth)):
     Generate a PDF for the given paper slug and return it to the browser.
 
     Steps:
-      1. Fetch {slug}/publish/{slug}.md from GitHub
-      2. Parse the frontmatter (metadata) and extract the body (paper text)
-      3. Fetch the LaTeX template from the pressroom repo
-      4. Run Pandoc to generate the PDF
-      5. Push the PDF back to {slug}/publish/{slug}.pdf in ideas-workbench
-      6. Return the PDF so the browser can display it inline
+      1. Validate the slug format (blocks path traversal)
+      2. Fetch {slug}/publish/{slug}.md from GitHub
+      3. Parse frontmatter and body
+      4. Run pre-flight checks (required fields, placeholders, LaTeX-unsafe chars)
+      5. Load the LaTeX template (local filesystem first, GitHub fallback)
+      6. Run Pandoc + XeLaTeX to generate the PDF
+      7. Push the PDF back to GitHub as the review copy
+      8. Return the PDF to the browser
 
-    Raises HTTP 404 if the paper .md file doesn't exist.
-    Raises HTTP 404 if the LaTeX template isn't found in the pressroom repo.
-    Raises HTTP 500 if Pandoc fails (includes the error output for debugging).
+    HTTP responses:
+      200  PDF returned.  X-Pressroom-Warnings header contains pre-flight warnings as JSON.
+      400  Slug is invalid, or pre-flight found blocking errors (missing title, empty body,
+           placeholders at review/published gate).
+      404  Paper .md file not found, or LaTeX template not found anywhere.
+      500  Pandoc/XeLaTeX failed — stderr is included in the error detail.
     """
+    # ── 1. Validate slug ──────────────────────────────────────────────────────
     if not _SLUG_RE.match(slug):
-        raise HTTPException(400, f"Invalid slug '{slug}'. Must be lowercase letters, digits, hyphens, or underscores.")
+        raise HTTPException(
+            400,
+            f"Invalid slug '{slug}'. Use only lowercase letters, digits, hyphens, or underscores."
+        )
 
+    # ── 2. Fetch the paper markdown from GitHub ───────────────────────────────
     md_path = f"{slug}/publish/{slug}.md"
-
-    # Step 1 — fetch the paper markdown from GitHub
     md_text = await gh_get_text(IDEAS_WORKBENCH_REPO, md_path)
     if md_text is None:
         raise PaperNotFoundError(slug)
 
-    # Step 2 — split the markdown into frontmatter metadata and body text
+    # ── 3. Parse frontmatter and body ─────────────────────────────────────────
     frontmatter, body = parse_frontmatter(md_text)
 
-    # Step 3 — fetch the LaTeX template from the pressroom repo
+    # ── 4. Pre-flight checks ──────────────────────────────────────────────────
+    preflight = run_preflight(frontmatter, body)
+
+    # Blocking errors — stop here, don't invoke Pandoc
+    if not preflight.ok:
+        error_messages = " | ".join(e.message for e in preflight.errors)
+        raise HTTPException(400, f"Pre-flight checks failed: {error_messages}")
+
+    # ── 5. Load LaTeX template ────────────────────────────────────────────────
     template_name = frontmatter.get("template", "whitepaper")
-    latex_raw = await gh_get_text(PRESSROOM_REPO, f"pandoc/{template_name}.latex")
+    latex_raw = _load_template_local(template_name)
+
+    if latex_raw is None:
+        # Local template not found — try GitHub (user-uploaded or repo template)
+        latex_raw = await gh_get_text(PRESSROOM_REPO, f"pandoc/{template_name}.latex")
+
     if latex_raw is None:
         raise HTTPException(
             404,
-            f"LaTeX template not found: pandoc/{template_name}.latex in {PRESSROOM_REPO}"
+            f"LaTeX template '{template_name}' not found locally or in {PRESSROOM_REPO}/pandoc/."
         )
 
-    # Step 4 — run Pandoc to generate the PDF
-    # generate_pdf() writes temp files under /tmp/pressroom/{slug}/ and returns
-    # the path to the generated PDF file
+    # ── 6. Generate PDF ───────────────────────────────────────────────────────
     try:
         output_path = await generate_pdf(slug, body, frontmatter, latex_raw)
     except RuntimeError as exc:
-        # Pandoc failed — return its stderr so the user can see what went wrong
-        raise HTTPException(500, f"PDF generation failed:\n{exc}")
+        raise HTTPException(500, f"PDF generation failed: {exc}")
 
-    # Step 5 — push the PDF back to GitHub as the review copy
-    # This makes it available in Obsidian and for the snapshot step later
-    pdf_bytes    = output_path.read_bytes()
-    pdf_gh_path  = f"{slug}/publish/{slug}.pdf"
+    # ── 7. Push review copy back to GitHub ───────────────────────────────────
+    pdf_bytes   = output_path.read_bytes()
+    pdf_gh_path = f"{slug}/publish/{slug}.pdf"
 
-    # Check if a review PDF already exists (need its SHA to overwrite it)
     existing_pdf = await gh_get(IDEAS_WORKBENCH_REPO, pdf_gh_path)
     existing_sha = existing_pdf.get("sha") if existing_pdf else None
 
@@ -104,12 +126,25 @@ async def preview_pdf(slug: str, _: str = Depends(check_auth)):
         sha=existing_sha,
     )
 
-    # Step 6 — return the PDF to the browser
-    # FileResponse streams the file from the local /tmp path
+    # ── 8. Return PDF with pre-flight warnings in headers ────────────────────
+    # Warnings don't block generation but the UI surfaces them to the author.
+    # We encode them as JSON in a response header — small, no extra round-trip.
+    warning_messages = [w.message for w in preflight.warnings]
+    if preflight.placeholder_count:
+        # Placeholder count is already included in the warning message but we
+        # also expose it as a standalone header for the UI to display prominently.
+        pass
+
+    headers = {
+        "X-Pressroom-Placeholder-Count": str(preflight.placeholder_count),
+        "X-Pressroom-Warnings": json.dumps(warning_messages),
+    }
+
     return FileResponse(
         output_path,
         media_type="application/pdf",
         filename=f"{slug}-preview.pdf",
+        headers=headers,
     )
 
 
@@ -118,21 +153,19 @@ async def download_pdf(slug: str, _: str = Depends(check_auth)):
     """
     Return the last locally generated PDF as a file download.
 
-    This does NOT regenerate the PDF — it just serves whatever was last produced
-    by the preview endpoint.  Use 'Preview PDF' first to generate it.
-
-    Raises HTTP 404 if no preview has been generated in the current session.
-    (The /tmp folder is cleared when the Docker container restarts.)
+    Does NOT regenerate — serves whatever was last produced by the preview
+    endpoint.  Use 'Preview PDF' first.  The /tmp folder is cleared on
+    container restart so this will 404 after a redeploy.
     """
     if not _SLUG_RE.match(slug):
         raise HTTPException(400, f"Invalid slug '{slug}'.")
 
-    output_path = TEMP_DIR / slug / f"{slug}.pdf"
+    output_path = TEMP_DIR / slug / "output.pdf"
 
     if not output_path.exists():
         raise HTTPException(
             404,
-            "No preview found for this session. Click 'Preview PDF' first."
+            "No preview found for this session. Click 'Preview PDF' first to generate one."
         )
 
     return FileResponse(
@@ -140,3 +173,17 @@ async def download_pdf(slug: str, _: str = Depends(check_auth)):
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{slug}-preview.pdf"'},
     )
+
+
+def _load_template_local(template_name: str) -> str | None:
+    """
+    Try to read a LaTeX template from the local /app/pandoc/ directory.
+
+    Returns the file content as a string, or None if not found.
+    Reading locally is always preferred over a GitHub API call — faster,
+    works offline, and not subject to rate limits.
+    """
+    path = _LOCAL_TEMPLATE_DIR / f"{template_name}.latex"
+    if path.exists():
+        return path.read_text(encoding="utf-8")
+    return None
