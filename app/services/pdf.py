@@ -17,7 +17,7 @@ import os
 import logging
 from pathlib import Path
 
-from .pdf.base import PDFEngine, get_pdf_engine
+from .base import PDFEngine, get_pdf_engine
 
 
 async def generate_pdf(slug: str, body: str, frontmatter: dict, template_content: str) -> Path:
