@@ -1,13 +1,36 @@
 %% pressroom whitepaper template
-%% A4, sans-serif, red accent, running header/footer
-%% xelatex compatible
+%% XeLaTeX compatible — all Pandoc defaults inlined so no partial templates needed.
+%% Fonts: Liberation Sans (body), Liberation Mono (code) — both installed in the Docker image.
+%% Custom styling: A4, red accent, running header/footer, status banner.
+
+%% ── Pass options to hyperref and url before any \usepackage ─────────────────
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
 
 \documentclass[11pt, a4paper]{article}
 
-%% ── Packages ────────────────────────────────────────────────────────────────
-\usepackage[a4paper, top=25mm, bottom=25mm, left=25mm, right=25mm]{geometry}
-\usepackage{fontspec}
+%% ── Engine detection ─────────────────────────────────────────────────────────
+\usepackage{iftex}
+
+%% ── Fonts ────────────────────────────────────────────────────────────────────
+%% XeLaTeX path (our Docker image uses XeLaTeX via pandoc/extra)
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp}
+\else
+  \usepackage{unicode-math}
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+
+%% Liberation Sans — metrically compatible with Arial; pre-installed (fonts-liberation)
+%% Liberation Mono — monospace companion; pre-installed (fonts-liberation)
 \setmainfont{Liberation Sans}
+\setmonofont{Liberation Mono}
+
+%% ── Core packages ────────────────────────────────────────────────────────────
+\usepackage[a4paper, top=25mm, bottom=25mm, left=25mm, right=25mm]{geometry}
 \usepackage{microtype}
 \usepackage{xcolor}
 \usepackage{titlesec}
@@ -16,18 +39,92 @@
 \usepackage{booktabs}
 \usepackage{longtable}
 \usepackage{array}
+\usepackage{multirow}
+\usepackage{calc}
+\usepackage{etoolbox}
 \usepackage{hyperref}
+\usepackage{bookmark}
 \usepackage{enumitem}
 \usepackage{graphicx}
 \usepackage{caption}
+\usepackage{subcaption}
 \usepackage{mdframed}
 \usepackage{setspace}
 \usepackage{parskip}
 \usepackage{fancyvrb}
 \usepackage{listings}
 \usepackage{soul}
+\usepackage{amsmath,amssymb}
 
-%% ── Colours ─────────────────────────────────────────────────────────────────
+%% Allow URLs to break across lines
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{}
+\urlstyle{same}
+
+%% ── Pandoc standard macros ───────────────────────────────────────────────────
+%% These are emitted by Pandoc into the document body; the template must define them.
+
+%% Compact list spacing (used by Pandoc for tight markdown lists)
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+
+%% Inline code passthrough (used when listings package is active)
+\providecommand{\passthrough}[1]{#1}
+
+%% Bounded image scaling — scales image to fit within text width/height
+\makeatletter
+\newsavebox\pandoc@box
+\newcommand*\pandocbounded[1]{%
+  \sbox\pandoc@box{#1}%
+  \Gscale@div\@tempa{\textheight}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
+  \Gscale@div\@tempb{\linewidth}{\wd\pandoc@box}%
+  \ifdim\@tempb\p@<\@tempa\p@\let\@tempa\@tempb\fi
+  \ifdim\@tempa\p@<\p@\scalebox{\@tempa}{\usebox\pandoc@box}%
+  \else\usebox{\pandoc@box}%
+  \fi%
+}
+\def\fps@figure{htbp}
+\makeatother
+
+%% CSL citation environment (used by Pandoc's citeproc bibliography output)
+\NewDocumentCommand\citeproctext{}{}
+\NewDocumentCommand\citeproc{mm}{%
+  \begingroup\def\citeproctext{#2}\cite{#1}\endgroup}
+\makeatletter
+\let\@cite@ofmt\@firstofone
+\def\@biblabel#1{}
+\def\@cite#1#2{{#1\if@tempswa , #2\fi}}
+\makeatother
+\newlength{\cslhangindent}
+\setlength{\cslhangindent}{1.5em}
+\newlength{\csllabelwidth}
+\setlength{\csllabelwidth}{3em}
+\newenvironment{CSLReferences}[2]
+ {\begin{list}{}{%
+  \setlength{\itemindent}{0pt}
+  \setlength{\leftmargin}{0pt}
+  \setlength{\parsep}{0pt}
+  \ifodd #1
+   \setlength{\leftmargin}{\cslhangindent}
+   \setlength{\itemindent}{-1\cslhangindent}
+  \fi
+  \setlength{\itemsep}{#2\baselineskip}}}
+ {\end{list}}
+\newcommand{\CSLBlock}[1]{\hfill\break\parbox[t]{\linewidth}{\strut\ignorespaces#1\strut}}
+\newcommand{\CSLLeftMargin}[1]{\parbox[t]{\csllabelwidth}{\strut#1\strut}}
+\newcommand{\CSLRightInline}[1]{\parbox[t]{\linewidth - \csllabelwidth}{\strut#1\strut}}
+\newcommand{\CSLIndent}[1]{\hspace{\cslhangindent}#1}
+
+%% Prevent overfull lines
+\setlength{\emergencystretch}{3em}
+
+%% Longtable compat patch (correct table placement after \paragraph)
+\makeatletter
+\patchcmd\longtable{\par}{\if@noskipsec\mbox{}\fi\par}{}{}
+\makeatother
+\IfFileExists{footnotehyper.sty}{\usepackage{footnotehyper}}{\usepackage{footnote}}
+\makesavenoteenv{longtable}
+
+%% ── Colours ──────────────────────────────────────────────────────────────────
 \definecolor{accent}{RGB}{180, 30, 30}
 \definecolor{rulecolor}{RGB}{180, 30, 30}
 \definecolor{lightgray}{RGB}{245, 245, 245}
@@ -39,11 +136,15 @@
   linkcolor=accent,
   urlcolor=accent,
   citecolor=accent,
+  filecolor=accent,
   pdfauthor={$author$},
   pdftitle={$title$},
+  hidelinks=false,
 }
 
 %% ── Section headings ─────────────────────────────────────────────────────────
+\setcounter{secnumdepth}{-\maxdimen} % no section numbers
+
 \titleformat{\section}
   {\large\bfseries\color{accent}}
   {\thesection}{1em}{}
@@ -152,11 +253,6 @@ $endif$
 \setlist[itemize]{leftmargin=1.5em, itemsep=0.2em, topsep=0.3em}
 \setlist[enumerate]{leftmargin=1.5em, itemsep=0.2em, topsep=0.3em}
 
-%% Pandoc emits \tightlist for compact markdown lists and \passthrough for
-%% inline code — custom templates must define these or XeLaTeX will abort.
-\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
-\providecommand{\passthrough}[1]{#1}
-
 %% ── Code blocks ──────────────────────────────────────────────────────────────
 \lstset{
   basicstyle=\small\ttfamily,
@@ -166,6 +262,11 @@ $endif$
   rulecolor=\color{accent},
   breaklines=true,
 }
+
+%% ── Syntax highlighting (Pandoc-generated macros go here) ───────────────────
+$if(highlighting-macros)$
+$highlighting-macros$
+$endif$
 
 %% ── Document ─────────────────────────────────────────────────────────────────
 \begin{document}
@@ -194,9 +295,18 @@ $endif$
 
 $body$
 
+$if(natbib)$
 $if(bibliography)$
-\bibliographystyle{plain}
-\bibliography{$bibliography$}
+\bibliography{$for(bibliography)$$bibliography$$sep$,$endfor$}
 $endif$
+$endif$
+
+$if(biblatex)$
+\printbibliography$if(biblio-title)$[title=$biblio-title$]$endif$
+$endif$
+
+$for(include-after)$
+$include-after$
+$endfor$
 
 \end{document}
